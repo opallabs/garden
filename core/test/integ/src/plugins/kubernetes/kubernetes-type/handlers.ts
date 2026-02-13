@@ -13,6 +13,7 @@ import cloneDeep from "fast-copy"
 import tmp from "tmp-promise"
 
 import type { TestGarden } from "../../../../../helpers.js"
+import { expectError } from "../../../../../helpers.js"
 import { getKubernetesTestGarden } from "./common.js"
 import { DeployTask } from "../../../../../../src/tasks/deploy.js"
 import {
@@ -39,12 +40,18 @@ import {
   kubernetesDeploy,
 } from "../../../../../../src/plugins/kubernetes/kubernetes-type/handlers.js"
 import { buildHelmModules } from "../helm/common.js"
-import { gardenAnnotationKey } from "../../../../../../src/util/string.js"
+import { gardenAnnotationKey, randomString } from "../../../../../../src/util/string.js"
 import { LocalModeProcessRegistry, ProxySshKeystore } from "../../../../../../src/plugins/kubernetes/local-mode.js"
 import type { KubernetesDeployAction } from "../../../../../../src/plugins/kubernetes/kubernetes-type/config.js"
-import { DEFAULT_BUILD_TIMEOUT_SEC, GardenApiVersion } from "../../../../../../src/constants.js"
+import {
+  DEFAULT_BUILD_TIMEOUT_SEC,
+  DEFAULT_DEPLOY_TIMEOUT_SEC,
+  GardenApiVersion,
+} from "../../../../../../src/constants.js"
 import type { ActionModeMap } from "../../../../../../src/actions/types.js"
 import type { NamespaceStatus } from "../../../../../../src/types/namespace.js"
+import stripAnsi from "strip-ansi"
+import type { DeployActionConfig } from "../../../../../../src/actions/deploy.js"
 
 describe("kubernetes-type handlers", () => {
   let tmpDir: tmp.DirectoryResult
@@ -114,13 +121,13 @@ describe("kubernetes-type handlers", () => {
   }
 
   async function deployInNamespace({ nsName, deployName }: { nsName: string; deployName: string }) {
-    garden.setModuleConfigs([withNamespace(nsModuleConfig, nsName)])
+    garden.overrideRawModuleConfigs([withNamespace(nsModuleConfig, nsName)])
     const graph = await garden.getConfigGraph({ log, emit: false })
     const action = graph.getDeploy(deployName)
     const resolvedAction = await garden.resolveAction<KubernetesDeployAction>({ action, log: garden.log, graph })
     const defaultNamespace = await getActionNamespace({ ctx, log, action: resolvedAction, provider: ctx.provider })
     const manifests = await getManifests({ ctx, api, log, action: resolvedAction, defaultNamespace })
-    const manifest = manifests.find((resource) => resource.kind === "Namespace")
+    const manifest = manifests.find((r) => r.kind === "Namespace")
 
     const deployTask = new DeployTask({
       garden,
@@ -191,7 +198,7 @@ describe("kubernetes-type handlers", () => {
   })
 
   afterEach(() => {
-    garden.setModuleConfigs(moduleConfigBackup)
+    garden.setRawModuleConfigs(moduleConfigBackup)
   })
 
   describe("getKubernetesDeployStatus", () => {
@@ -217,6 +224,18 @@ describe("kubernetes-type handlers", () => {
       expect(remoteResources).to.exist
       expect(remoteResources.length).to.equal(1)
       expect(remoteResources[0].kind).to.equal("Deployment")
+    })
+
+    it("emits a namespaceStatus event for the app namespace", async () => {
+      const { deployParams } = await prepareActionDeployParams("module-simple", {})
+      garden.events.eventLog = []
+
+      await getKubernetesDeployStatus(deployParams)
+
+      const nsStatusEvent = garden.events.eventLog.find((e) => e.name === "namespaceStatus")
+
+      expect(nsStatusEvent).to.exist
+      expect(nsStatusEvent!.payload.namespaceName).to.eql("kubernetes-type-test-default")
     })
 
     it("should return missing status when metadata ConfigMap is missing", async () => {
@@ -352,12 +371,24 @@ describe("kubernetes-type handlers", () => {
       expect(remoteResources[0].metadata?.name).to.equal("busybox-deployment")
     })
 
+    it("emits a namespaceStatus event for the app namespace", async () => {
+      const { deployParams } = await prepareActionDeployParams("module-simple", {})
+      garden.events.eventLog = []
+
+      await kubernetesDeploy(deployParams)
+
+      const nsStatusEvent = garden.events.eventLog.find((e) => e.name === "namespaceStatus")
+
+      expect(nsStatusEvent).to.exist
+      expect(nsStatusEvent!.payload.namespaceName).to.eql("kubernetes-type-test-default")
+    })
+
     it("should successfully deploy when serviceResource doesn't have a containerModule", async () => {
       const { deployParams } = await prepareActionDeployParams("module-simple", {})
 
       // Here, we're not going through a router, so we listen for the `namespaceStatus` event directly.
       let namespaceStatus: NamespaceStatus | null = null
-      ctx.events.once("namespaceStatus", (status) => (namespaceStatus = status))
+      ctx.events.once("namespaceStatus", (s) => (namespaceStatus = s))
       const status = await kubernetesDeploy(deployParams)
       expect(status.state).to.eql("ready")
       expect(namespaceStatus).to.exist
@@ -490,6 +521,199 @@ describe("kubernetes-type handlers", () => {
       // test successful deploy
       await kubernetesDeploy(configMapList.deployParams)
     })
+
+    it("should apply the custom applyArgs to the deployment", async () => {
+      // This example has a bad custom argument - it is `--unknown-apply-flag`.
+      const { deployParams } = await prepareActionDeployParams("apply-args", {})
+
+      await expectError(() => kubernetesDeploy(deployParams), { contains: "error: unknown flag: --unknown-apply-flag" })
+    })
+
+    context("logs and events", () => {
+      function getDeployActionConfig(name: string): DeployActionConfig {
+        // copied from 'action-simple' disk-based config
+        return {
+          kind: "Deploy",
+          type: "kubernetes",
+          name,
+          internal: {
+            basePath: ".",
+          },
+          timeout: DEFAULT_DEPLOY_TIMEOUT_SEC,
+          spec: {
+            manifests: [
+              {
+                apiVersion: "apps/v1",
+                kind: "Deployment",
+                metadata: {
+                  name: "nginx",
+                  labels: {
+                    app: "nginx",
+                  },
+                },
+                spec: {
+                  replicas: 1,
+                  selector: {
+                    matchLabels: {
+                      app: "nginx",
+                    },
+                  },
+                  template: {
+                    metadata: {
+                      labels: {
+                        app: "nginx",
+                      },
+                    },
+                    spec: {
+                      containers: [
+                        {
+                          name: "nginx",
+                          image: "nginx:1.14.2",
+                          ports: [
+                            {
+                              containerPort: 80,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        } as DeployActionConfig
+      }
+
+      it("should return events and Pod logs if the Pod can't start", async () => {
+        const name = `nginx-${randomString(4)}`
+        const actionConfig = getDeployActionConfig(name)
+
+        actionConfig.spec["manifests"][0]["metadata"]["name"] = name
+        actionConfig.spec["manifests"][0]["spec"]["template"]["spec"]["containers"] = [
+          {
+            name: "busybox",
+            image: "busybox:1.31.1",
+            args: ["/bin/sh", "-c", "badcommand"],
+          },
+        ]
+
+        garden.addAction(actionConfig)
+
+        const graph = await garden.getConfigGraph({
+          log: garden.log,
+          emit: false,
+        })
+        const action = graph.getDeploy(name)
+        const resolvedAction = await garden.resolveAction<KubernetesDeployAction>({ action, log: garden.log, graph })
+
+        await expectError(
+          () =>
+            kubernetesDeploy({
+              ctx,
+              log: actionLog,
+              action: resolvedAction,
+              force: false,
+            }),
+          (err) => {
+            const message = stripAnsi(err.message)
+            expect(message).to.include(`Latest events from Deployment ${name}`)
+            expect(message).to.include(`Back-off restarting failed container busybox`)
+            expect(message).to.include(`Latest logs from failed containers in each Pod in Deployment ${name}`)
+            expect(message).to.include(`/bin/sh: badcommand: not found`)
+          }
+        )
+      })
+
+      it("should only show logs returned from failed containers", async () => {
+        const name = `nginx-${randomString(4)}`
+        const actionConfig = getDeployActionConfig(name)
+
+        actionConfig.spec["manifests"][0]["metadata"]["name"] = name
+        actionConfig.spec["manifests"][0]["spec"]["template"]["spec"]["initContainers"] = [
+          {
+            name: "busybox1",
+            image: "busybox:1.31.1",
+            args: ["/bin/sh", "-c", "echo 'I AM OK'"],
+          },
+        ]
+        actionConfig.spec["manifests"][0]["spec"]["template"]["spec"]["containers"] = [
+          {
+            name: "busybox2",
+            image: "busybox:1.31.1",
+            args: ["/bin/sh", "-c", "echo 'I AM NOT OK' && exit 1"],
+          },
+        ]
+
+        garden.addAction(actionConfig)
+
+        const graph = await garden.getConfigGraph({
+          log: garden.log,
+          emit: false,
+        })
+        const action = graph.getDeploy(name)
+        const resolvedAction = await garden.resolveAction<KubernetesDeployAction>({ action, log: garden.log, graph })
+
+        await expectError(
+          () =>
+            kubernetesDeploy({
+              ctx,
+              log: actionLog,
+              action: resolvedAction,
+              force: false,
+            }),
+          (err) => {
+            const message = stripAnsi(err.message)
+            expect(message).to.include(`I AM NOT OK`)
+            expect(message).to.not.include(`I AM OK`)
+          }
+        )
+      })
+
+      it("should include logs from failed init containers", async () => {
+        const name = `nginx-${randomString(4)}`
+        const actionConfig = getDeployActionConfig(name)
+
+        actionConfig.spec["manifests"][0]["metadata"]["name"] = name
+        // add 2 init containers - one should run successfully, and another should fail
+        actionConfig.spec["manifests"][0]["spec"]["template"]["spec"]["initContainers"] = [
+          {
+            name: "busybox1",
+            image: "busybox:1.31.1",
+            args: ["/bin/sh", "-c", "echo 'I AM OK'"],
+          },
+          {
+            name: "busybox2",
+            image: "busybox:1.31.1",
+            args: ["/bin/sh", "-c", "echo 'I AM NOT OK' && exit 1"],
+          },
+        ]
+
+        garden.addAction(actionConfig)
+
+        const graph = await garden.getConfigGraph({
+          log: garden.log,
+          emit: false,
+        })
+        const action = graph.getDeploy(name)
+        const resolvedAction = await garden.resolveAction<KubernetesDeployAction>({ action, log: garden.log, graph })
+
+        await expectError(
+          () =>
+            kubernetesDeploy({
+              ctx,
+              log: actionLog,
+              action: resolvedAction,
+              force: false,
+            }),
+          (err) => {
+            const message = stripAnsi(err.message)
+            expect(message).to.include(`I AM NOT OK`)
+            expect(message).to.not.include(`I AM OK`)
+          }
+        )
+      })
+    })
   })
 
   describe("deleteKubernetesDeploy", () => {
@@ -519,6 +743,7 @@ describe("kubernetes-type handlers", () => {
         action: ns2Graph.getDeploy("namespace-resource"),
         force: false,
       })
+      garden.events.eventLog = []
 
       // This should only delete kubernetes-type-ns-2.
       await garden.processTasks({ tasks: [deleteDeployTask], throwOnError: true })
@@ -526,6 +751,11 @@ describe("kubernetes-type handlers", () => {
       expect(await getDeployedResource(ctx, ctx.provider, ns1Manifest!, log), "ns1resource").to.exist
       expect(await getDeployedResource(ctx, ctx.provider, ns2Manifest!, log), "ns2resource").to.not.exist
       expect(await getDeployedResource(ctx, ctx.provider, ns2Resource!, log), "ns2resource").to.not.exist
+
+      const nsStatusEvent = garden.events.eventLog.find(
+        (e) => e.name === "namespaceStatus" && e.payload.namespaceName === "kubernetes-type-ns-2"
+      )
+      expect(nsStatusEvent).to.exist
     })
 
     it("deletes all resources including a metadata ConfigMap describing what was last deployed", async () => {

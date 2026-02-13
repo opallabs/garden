@@ -124,6 +124,8 @@ export const gardenPlugin = () =>
                 cacheStatus: module.spec.cacheStatus || false,
                 stackReferences: module.spec.stackReferences || [],
                 deployFromPreview: module.spec.deployFromPreview || false,
+                useNewPulumiVarfileSchema: module.spec.useNewPulumiVarfileSchema || false,
+                showSecretsInOutput: module.spec.showSecretsInOutput || false,
                 root: module.spec.root || ".",
                 ...omit(module.spec, ["build", "dependencies"]),
               },

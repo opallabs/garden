@@ -46,11 +46,9 @@ A description of the action.
 
 By default, the directory where the action is defined is used as the source for the build context.
 
-You can override this by setting either `source.path` to another (POSIX-style) path relative to the action source directory, or `source.repository` to get the source from an external repository.
+You can override the directory that is used for the build context by setting `source.path`.
 
-If using `source.path`, you must make sure the target path is in a git repository.
-
-For `source.repository` behavior, please refer to the [Remote Sources guide](https://docs.garden.io/advanced/using-remote-sources).
+You can use `source.repository` to get the source from an external repository. For more information on remote actions, please refer to the [Remote Sources guide](https://docs.garden.io/bonsai-0.13/advanced/using-remote-sources).
 
 | Type     | Required |
 | -------- | -------- |
@@ -60,7 +58,11 @@ For `source.repository` behavior, please refer to the [Remote Sources guide](htt
 
 [source](#source) > path
 
-A relative POSIX-style path to the source directory for this action. You must make sure this path exists and is in a git repository!
+A relative POSIX-style path to the source directory for this action.
+
+If specified together with `source.repository`, the path will be relative to the repository root.
+
+Otherwise, the path will be relative to the directory containing the Garden configuration file.
 
 | Type        | Required |
 | ----------- | -------- |
@@ -146,7 +148,7 @@ For actions other than _Build_ actions, this is usually not necessary to specify
 
 _Build_ actions have a different behavior, since they generally are based on some files in the source tree, so please reference the docs for more information on those.
 
-Note that you can also _exclude_ files using the `exclude` field or by placing `.gardenignore` files in your source tree, which use the same format as `.gitignore` files. See the [Configuration Files guide](https://docs.garden.io/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
+Note that you can also _exclude_ files using the `exclude` field or by placing `.gardenignore` files in your source tree, which use the same format as `.gitignore` files. See the [Configuration Files guide](https://docs.garden.io/bonsai-0.13/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
 
 | Type               | Required |
 | ------------------ | -------- |
@@ -164,7 +166,7 @@ include:
 
 Specify a list of POSIX-style paths or glob patterns that should be explicitly excluded from the action's version.
 
-For actions other than _Build_ actions, this is usually not necessary to specify, or is implicitly inferred. For _Deploy_, _Run_ and _Test_ actions, the exclusions specified here only applied on top of explicitly set `include` paths, or such paths inferred by providers. See the [Configuration Files guide](https://docs.garden.io/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
+For actions other than _Build_ actions, this is usually not necessary to specify, or is implicitly inferred. For _Deploy_, _Run_ and _Test_ actions, the exclusions specified here only applied on top of explicitly set `include` paths, or such paths inferred by providers. See the [Configuration Files guide](https://docs.garden.io/bonsai-0.13/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
 
 Unlike the `scan.exclude` field in the project config, the filters here have _no effect_ on which files and directories are watched for changes when watching is enabled. Use the project `scan.exclude` field to affect those, if you have large directories that should not be watched for changes.
 
@@ -279,7 +281,7 @@ Set a timeout for the test to complete, in seconds.
 
 [spec](#spec) > cacheResult
 
-Set to false if you don't want the Runs's result to be cached. Use this if the Run needs to be run any time your project (or one or more of the Run's dependants) is deployed. Otherwise the Run is only re-run when its version changes, or when you run `garden run`.
+Set to false if you don't want the Test action result to be cached. Use this if the Test action needs to be run any time your project (or one or more of the Test action's dependants) is deployed. Otherwise the Test action is only re-run when its version changes, or when you run `garden run`.
 
 | Type      | Default | Required |
 | --------- | ------- | -------- |
@@ -561,7 +563,39 @@ The name of the resource.
 
 [spec](#spec) > files
 
-POSIX-style paths to YAML files to load manifests from. Each can contain multiple manifests, and can include any Garden template strings, which will be resolved before searching the manifests for the resource that contains the Pod spec for the Test.
+{% hint style="warning" %}
+**Deprecated**: `spec.files` in `kubernetes` Deploy actions will be removed in Garden 0.14. Use `spec.manifestTemplates` and/or `spec.manifestFiles` instead.
+{% endhint %}
+
+POSIX-style paths to YAML files to load manifests from. Each file may contain multiple manifests.
+
+Garden will treat each manifestTemplate file as a template string expression, resolve it and then attempt to parse the resulting string as YAML.
+
+Then it will find the resource matching the Pod spec for the Test ([See also `spec.resource`](#specresource)).
+
+| Type               | Default | Required |
+| ------------------ | ------- | -------- |
+| `array[posixPath]` | `[]`    | No       |
+
+### `spec.manifestFiles[]`
+
+[spec](#spec) > manifestFiles
+
+POSIX-style paths to YAML files to load manifests from. Garden will *not* use the Garden Template Language to transform manifests in these files. Each file can contain multiple manifests.
+
+| Type               | Default | Required |
+| ------------------ | ------- | -------- |
+| `array[posixPath]` | `[]`    | No       |
+
+### `spec.manifestTemplates[]`
+
+[spec](#spec) > manifestTemplates
+
+POSIX-style paths to YAML files to load manifests from. Each file may contain multiple manifests.
+
+Garden will treat each manifestTemplate file as a template string expression, resolve it and then attempt to parse the resulting string as YAML.
+
+Then it will find the resource matching the Pod spec for the Test ([See also `spec.resource`](#specresource)).
 
 | Type               | Default | Required |
 | ------------------ | ------- | -------- |

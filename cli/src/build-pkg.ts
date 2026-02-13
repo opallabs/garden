@@ -7,10 +7,10 @@
  */
 
 import chalk from "chalk"
-import { resolve, relative, join } from "path"
-import { STATIC_DIR, GARDEN_CLI_ROOT, GARDEN_CORE_ROOT } from "@garden-io/core/build/src/constants.js"
+import { join, relative, resolve } from "path"
+import { GARDEN_CLI_ROOT, GARDEN_CORE_ROOT, STATIC_DIR } from "@garden-io/core/build/src/constants.js"
 import { readFile, writeFile } from "fs/promises"
-import { remove, mkdirp, copy, pathExists } from "fs-extra/esm"
+import { copy, mkdirp, pathExists, remove } from "fs-extra/esm"
 import { exec, getPackageVersion } from "@garden-io/core/build/src/util/util.js"
 import { pick } from "lodash-es"
 import minimist from "minimist"
@@ -75,7 +75,7 @@ function getRustTarget(spec: TargetSpec): string {
   return target
 }
 
-export const nodeVersion = "22.2.0"
+export const nodeVersion = "22.16.0"
 export const nodeTargets: {
   [name: string]: { spec: TargetSpec; handler: (p: TargetHandlerParams) => Promise<void> }
 } = {
@@ -86,7 +86,7 @@ export const nodeTargets: {
       node: nodeVersion,
       nodeBinaryPlatform: "darwin",
       url: `https://nodejs.org/dist/v${nodeVersion}/node-v${nodeVersion}-darwin-x64.tar.gz`,
-      checksum: "b3cd4ab4bb4ac7f9bd5c7603baf6bbdcf466c86bb6ca49abf5e221ab8fad7ceb",
+      checksum: "838d400f7e66c804e5d11e2ecb61d6e9e878611146baff69d6a2def3cc23f4ac",
     },
     handler: pkgMacos,
   },
@@ -97,7 +97,7 @@ export const nodeTargets: {
       node: nodeVersion,
       nodeBinaryPlatform: "darwin",
       url: `https://nodejs.org/dist/v${nodeVersion}/node-v${nodeVersion}-darwin-arm64.tar.gz`,
-      checksum: "66dd98bd28d19603f2e5ab0aa0e07b64f8cad28bbc446bb44fb61cc3da62e685",
+      checksum: "1d7f34ec4c03e12d8b33481e5c4560432d7dc31a0ef3ff5a4d9a8ada7cf6ecc9",
     },
     handler: pkgMacos,
   },
@@ -108,7 +108,7 @@ export const nodeTargets: {
       node: nodeVersion,
       nodeBinaryPlatform: "linux",
       url: `https://nodejs.org/dist/v${nodeVersion}/node-v${nodeVersion}-linux-x64.tar.gz`,
-      checksum: "2c6eaf8bfd0f886ed8764ffce19c795e909639105e4056b1d9f8f917bad12cf1",
+      checksum: "fb870226119d47378fa9c92c4535389c72dae14fcc7b47e6fdcc82c43de5a547",
     },
     handler: pkgLinux,
   },
@@ -119,7 +119,7 @@ export const nodeTargets: {
       node: nodeVersion,
       nodeBinaryPlatform: "linux",
       url: `https://nodejs.org/dist/v${nodeVersion}/node-v${nodeVersion}-linux-arm64.tar.gz`,
-      checksum: "7fc74ddeb3e2317c905fdebd2b681d565fc2a2980515430d4f01dad4ce312175",
+      checksum: "1725602e9fb150eb8b8220a899085190e1c04d1a5f3862b01c3dc1dfce0157f9",
     },
     handler: pkgLinux,
   },
@@ -131,7 +131,7 @@ export const nodeTargets: {
       nodeBinaryPlatform: "linux",
       // Alpine builds live in https://unofficial-builds.nodejs.org/download/release/
       url: `https://unofficial-builds.nodejs.org/download/release/v${nodeVersion}/node-v${nodeVersion}-linux-x64-musl.tar.gz`,
-      checksum: "61bce4df17453a8fa34a5f9be665d2283cde62f6dc7c0103a0f03e51b110f23f",
+      checksum: "6d20ac7f034c4117bbefcbde6b63412637dba30aab144a1114fc604b6609fcba",
     },
     handler: pkgAlpine,
   },
@@ -142,7 +142,7 @@ export const nodeTargets: {
       node: nodeVersion,
       nodeBinaryPlatform: "win32",
       url: `https://nodejs.org/dist/v${nodeVersion}/node-v${nodeVersion}-win-x64.zip`,
-      checksum: "f83e956bd90c7f5066a7e96e9372839fcc263795525fa0c03cfdf4b43be9457f",
+      checksum: "21c2d9735c80b8f86dab19305aa6a9f6f59bbc808f68de3eef09d5832e3bfbbd",
     },
     handler: pkgWindows,
   },
@@ -437,8 +437,30 @@ async function buildBinaries(args: string[]) {
     console.log(chalk.cyan("Compiling garden binary for " + targetName))
     const rustTarget = getRustTarget(target.spec)
 
-    // Run Garden SEA smoke tests. Windows tests run in a wine environment.
-    await exec(cargoCommand, ["test", "--target", rustTarget], { cwd: gardenSeaDir, stdio: "inherit" })
+    // Run Garden SEA smoke tests, except when on Windows.
+    //
+    // The Windows binary is still built and tested on actual Windows in the test-windows CircleCI job.
+    //
+    // I tried to get the Wine-based dist tests for the Windows build to work, but ended up giving up (faced lots of
+    // errors to due with 32 vs 64 bit binary formats, missing DLLs etc. which I spent too much time chasing down).
+    // The brittleness and baroque nature of that Wine-based flow also made me want to eliminate it from our pipeline
+    // (since I could see it causing further instabilities down the road even if we fixed things as they are now).
+    // - THS
+    const skipTests = cargoCommand === "cross" && target.spec.os === "win"
+    if (!skipTests) {
+      await exec(cargoCommand, ["test", "--target", rustTarget], { cwd: gardenSeaDir, stdio: "inherit" })
+    } else {
+      console.log(
+        chalk.yellow(
+          "Skipping dist tests for Windows (the Wine-based runtime test environment for Windows was causing us trouble)"
+        )
+      )
+      console.log(
+        chalk.yellow(
+          "In CI, the Windows executable will be tested on an actual Windows runner in the test-windows job."
+        )
+      )
+    }
 
     // Build the release binary
     await exec(cargoCommand, ["build", "--target", rustTarget, "--release"], { cwd: gardenSeaDir, stdio: "inherit" })

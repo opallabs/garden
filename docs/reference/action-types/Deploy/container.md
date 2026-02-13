@@ -46,11 +46,9 @@ A description of the action.
 
 By default, the directory where the action is defined is used as the source for the build context.
 
-You can override this by setting either `source.path` to another (POSIX-style) path relative to the action source directory, or `source.repository` to get the source from an external repository.
+You can override the directory that is used for the build context by setting `source.path`.
 
-If using `source.path`, you must make sure the target path is in a git repository.
-
-For `source.repository` behavior, please refer to the [Remote Sources guide](https://docs.garden.io/advanced/using-remote-sources).
+You can use `source.repository` to get the source from an external repository. For more information on remote actions, please refer to the [Remote Sources guide](https://docs.garden.io/bonsai-0.13/advanced/using-remote-sources).
 
 | Type     | Required |
 | -------- | -------- |
@@ -60,7 +58,11 @@ For `source.repository` behavior, please refer to the [Remote Sources guide](htt
 
 [source](#source) > path
 
-A relative POSIX-style path to the source directory for this action. You must make sure this path exists and is in a git repository!
+A relative POSIX-style path to the source directory for this action.
+
+If specified together with `source.repository`, the path will be relative to the repository root.
+
+Otherwise, the path will be relative to the directory containing the Garden configuration file.
 
 | Type        | Required |
 | ----------- | -------- |
@@ -146,7 +148,7 @@ For actions other than _Build_ actions, this is usually not necessary to specify
 
 _Build_ actions have a different behavior, since they generally are based on some files in the source tree, so please reference the docs for more information on those.
 
-Note that you can also _exclude_ files using the `exclude` field or by placing `.gardenignore` files in your source tree, which use the same format as `.gitignore` files. See the [Configuration Files guide](https://docs.garden.io/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
+Note that you can also _exclude_ files using the `exclude` field or by placing `.gardenignore` files in your source tree, which use the same format as `.gitignore` files. See the [Configuration Files guide](https://docs.garden.io/bonsai-0.13/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
 
 | Type               | Required |
 | ------------------ | -------- |
@@ -164,7 +166,7 @@ include:
 
 Specify a list of POSIX-style paths or glob patterns that should be explicitly excluded from the action's version.
 
-For actions other than _Build_ actions, this is usually not necessary to specify, or is implicitly inferred. For _Deploy_, _Run_ and _Test_ actions, the exclusions specified here only applied on top of explicitly set `include` paths, or such paths inferred by providers. See the [Configuration Files guide](https://docs.garden.io/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
+For actions other than _Build_ actions, this is usually not necessary to specify, or is implicitly inferred. For _Deploy_, _Run_ and _Test_ actions, the exclusions specified here only applied on top of explicitly set `include` paths, or such paths inferred by providers. See the [Configuration Files guide](https://docs.garden.io/bonsai-0.13/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
 
 Unlike the `scan.exclude` field in the project config, the filters here have _no effect_ on which files and directories are watched for changes when watching is enabled. Use the project `scan.exclude` field to affect those, if you have large directories that should not be watched for changes.
 
@@ -453,6 +455,10 @@ spec:
 
 [spec](#spec) > [volumes](#specvolumes) > action
 
+{% hint style="warning" %}
+**Deprecated**: Volume container action references will be removed in Garden 0.14. Use the `kubernetes` action type instead of the `container` action type if you need persistent volume claims or mount configmaps.
+{% endhint %}
+
 The action reference to a _volume Deploy action_ that should be mounted at `containerPath`. The supported action types are `persistentvolumeclaim` and `configmap`.
 
 Note: Make sure to pay attention to the supported `accessModes` of the referenced volume. Unless it supports the ReadWriteMany access mode, you'll need to make sure it is not configured to be mounted by multiple services at the same time. Refer to the documentation of the module type in question to learn more.
@@ -550,7 +556,7 @@ Specifies which files or directories to sync to which paths inside the running c
 
 Sync is enabled e.g. by setting the `--sync` flag on the `garden deploy` command.
 
-See the [Code Synchronization guide](https://docs.garden.io/guides/code-synchronization) for more information.
+See the [Code Synchronization guide](https://docs.garden.io/bonsai-0.13/guides/code-synchronization) for more information.
 
 | Type     | Required |
 | -------- | -------- |
@@ -660,7 +666,7 @@ spec:
 
 [spec](#spec) > [sync](#specsync) > [paths](#specsyncpaths) > mode
 
-The sync mode to use for the given paths. See the [Code Synchronization guide](https://docs.garden.io/guides/code-synchronization) for details.
+The sync mode to use for the given paths. See the [Code Synchronization guide](https://docs.garden.io/bonsai-0.13/guides/code-synchronization) for details.
 
 | Type     | Allowed Values                                                                                                                            | Default          | Required |
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ---------------- | -------- |
@@ -710,6 +716,10 @@ Set the default group on files and directories at the target. Specify either an 
 
 [spec](#spec) > localMode
 
+{% hint style="warning" %}
+**Deprecated**: The local mode will be removed in the next major version of Garden, 0.14.
+{% endhint %}
+
 [EXPERIMENTAL] Configures the local application which will send and receive network requests instead of the target resource.
 
 The target service will be replaced by a proxy container which runs an SSH server to proxy requests.
@@ -720,7 +730,7 @@ Local mode always takes the precedence over sync mode if there are any conflicti
 
 Health checks are disabled for services running in local mode.
 
-See the [Local Mode guide](https://docs.garden.io/guides/running-service-in-local-mode) for more information.
+See the [Local Mode guide](https://docs.garden.io/bonsai-0.13/guides/running-service-in-local-mode) for more information.
 
 Note! This feature is still experimental. Some incompatible changes can be made until the first non-experimental release.
 
@@ -732,6 +742,10 @@ Note! This feature is still experimental. Some incompatible changes can be made 
 
 [spec](#spec) > [localMode](#speclocalmode) > ports
 
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
+
 The reverse port-forwards configuration for the local application.
 
 | Type            | Required |
@@ -741,6 +755,10 @@ The reverse port-forwards configuration for the local application.
 ### `spec.localMode.ports[].local`
 
 [spec](#spec) > [localMode](#speclocalmode) > [ports](#speclocalmodeports) > local
+
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
 
 The local port to be used for reverse port-forward.
 
@@ -752,6 +770,10 @@ The local port to be used for reverse port-forward.
 
 [spec](#spec) > [localMode](#speclocalmode) > [ports](#speclocalmodeports) > remote
 
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
+
 The remote port to be used for reverse port-forward.
 
 | Type     | Required |
@@ -761,6 +783,10 @@ The remote port to be used for reverse port-forward.
 ### `spec.localMode.command[]`
 
 [spec](#spec) > [localMode](#speclocalmode) > command
+
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
 
 The command to run the local application. If not present, then the local application should be started manually.
 
@@ -772,6 +798,10 @@ The command to run the local application. If not present, then the local applica
 
 [spec](#spec) > [localMode](#speclocalmode) > restart
 
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
+
 Specifies restarting policy for the local application. By default, the local application will be restarting infinitely with 1000ms between attempts.
 
 | Type     | Default                         | Required |
@@ -782,6 +812,10 @@ Specifies restarting policy for the local application. By default, the local app
 
 [spec](#spec) > [localMode](#speclocalmode) > [restart](#speclocalmoderestart) > delayMsec
 
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
+
 Delay in milliseconds between the local application restart attempts. The default value is 1000ms.
 
 | Type     | Default | Required |
@@ -791,6 +825,10 @@ Delay in milliseconds between the local application restart attempts. The defaul
 ### `spec.localMode.restart.max`
 
 [spec](#spec) > [localMode](#speclocalmode) > [restart](#speclocalmoderestart) > max
+
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
 
 Max number of the local application restarts. Unlimited by default.
 
@@ -999,7 +1037,7 @@ The maximum duration (in seconds) to wait for resources to deploy and become hea
 [spec](#spec) > limits
 
 {% hint style="warning" %}
-**Deprecated**: This field will be removed in a future release.
+**Deprecated**: Please use the `cpu` and `memory` fields instead.
 {% endhint %}
 
 Specify resource limits for the service.

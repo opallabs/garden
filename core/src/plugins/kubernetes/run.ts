@@ -23,7 +23,7 @@ import { KubeApi, KubernetesError } from "./api.js"
 import { getPodLogs, checkPodStatus } from "./status/pod.js"
 import type { KubernetesResource, KubernetesPod, KubernetesServerResource, SupportedRuntimeAction } from "./types.js"
 import type { ContainerEnvVars, ContainerResourcesSpec, ContainerVolumeSpec } from "../container/config.js"
-import { prepareEnvVars, makePodName, renderPodEvents, sanitizeVolumesForPodRunner } from "./util.js"
+import { prepareEnvVars, makePodName, renderWorkloadEvents, sanitizeVolumesForPodRunner } from "./util.js"
 import { dedent, deline, randomString } from "../../util/string.js"
 import type { ArtifactSpec } from "../../config/validation.js"
 import { prepareSecrets } from "./secrets.js"
@@ -38,7 +38,6 @@ import fsExtra from "fs-extra"
 const { copy } = fsExtra
 import type { PodLogEntryConverter, PodLogEntryConverterParams } from "./logs.js"
 import { K8sLogFollower } from "./logs.js"
-import { Stream } from "ts-stream"
 import type { V1PodSpec, V1Container, V1Pod, V1ContainerStatus, V1PodStatus } from "@kubernetes/client-node"
 import type { RunResult } from "../../plugin/base.js"
 import { LogLevel } from "../../logger/logger.js"
@@ -582,29 +581,22 @@ async function runWithArtifacts({
         log,
         stdout,
         stderr,
-        // Anything above two minutes for this would be unusual
-        timeoutSec: 120,
+        // Anything above 10 minutes for this would be unusual
+        timeoutSec: 600,
         buffer: true,
       })
     } catch (err) {
-      // TODO: fall back to copying `arc` (https://github.com/mholt/archiver) or similar into the container and
-      // using that (tar is not statically compiled so we can't copy that directly). Keeping this snippet around
-      // for that:
-      // await runner.exec({
-      //   command: ["/bin/sh", "-c", `mkdir -p /.garden/bin/ && sed -n 'w /.garden/bin/arc' && chmod +x /.garden/bin/arc`],
-      //   container: containerName,
-      //   ignoreError: false,
-      //   input: <binary>,
-      //   log,
-      //   stdout,
-      //   stderr,
-      // })
-      throw new ConfigurationError({
-        message: deline`
+      if (err instanceof PodRunnerWorkloadError && err.details.exitCode === 127) {
+        throw new ConfigurationError({
+          message: deline`
         ${description} specifies artifacts to export, but the image doesn't
         contain the tar binary. In order to copy artifacts out of Kubernetes containers, both sh and tar need to
         be installed in the image.`,
-      })
+          wrappedErrors: [err],
+        })
+      } else {
+        throw err
+      }
     }
 
     try {
@@ -808,14 +800,11 @@ class PodRunnerNotFoundError extends PodRunnerError {
 
     super({
       message: dedent`
-        Could not find Pod while waiting for it to complete. The Pod might have been evicted or deleted.
-
         There are several different possible causes for Pod disruptions.
 
         You can read more about the topic in the Kubernetes documentation:
-        https://kubernetes.io/docs/concepts/workloads/pods/disruptions/${
-          events?.length ? `\n\n${renderPodEvents(events)}` : ""
-        }
+        https://kubernetes.io/docs/concepts/workloads/pods/disruptions/\n\n
+        ${renderWorkloadEvents(events || [], "Pod", details.podName)}
       `,
       details,
     })
@@ -845,6 +834,7 @@ interface RunAndWaitResult {
 }
 
 export interface PodErrorDetails {
+  podName: string
   logs?: string
   // optional details
   exitCode?: number
@@ -905,43 +895,35 @@ export class PodRunner {
           origin: this.getFullCommand()[0]!,
           log: log.createLog({ fixLevel: LogLevel.verbose }),
         }
-
-    const stream = new Stream<RunLogEntry>()
-    void stream.forEach(
-      (entry) => {
-        const { msg, timestamp } = entry
-        let isoTimestamp: string
-        try {
-          if (timestamp) {
-            isoTimestamp = timestamp.toISOString()
-          } else {
-            isoTimestamp = new Date().toISOString()
-          }
-        } catch {
+    const onLogEntry = (entry: RunLogEntry) => {
+      const { msg, timestamp } = entry
+      let isoTimestamp: string
+      try {
+        if (timestamp) {
+          isoTimestamp = timestamp.toISOString()
+        } else {
           isoTimestamp = new Date().toISOString()
         }
-        events.emit("log", {
-          level: "verbose",
-          timestamp: isoTimestamp,
-          msg,
-          ...logEventContext,
-        })
-        if (tty) {
-          process.stdout.write(`${entry.msg}\n`)
-        }
-      },
-      (err) => {
-        if (err) {
-          log.error(`Error while following logs: ${err}`)
-        }
+      } catch {
+        isoTimestamp = new Date().toISOString()
       }
-    )
+      events.emit("log", {
+        level: "verbose",
+        timestamp: isoTimestamp,
+        msg,
+        ...logEventContext,
+      })
+      if (tty) {
+        process.stdout.write(`${entry.msg}\n`)
+      }
+    }
+
     return new K8sLogFollower({
       defaultNamespace: this.namespace,
       // We use 1 second in the PodRunner, because the task / test will only finish once the LogFollower finished.
       // If this is too low, we waste resources (network/cpu) – if it's too high we add extra time to the run execution.
       retryIntervalMs: 1000,
-      stream,
+      onLogEntry,
       log,
       entryConverter: makeRunLogEntry,
       resources: [this.pod],
@@ -1018,6 +1000,7 @@ export class PodRunner {
       }
       return {
         podEvents,
+        podName: this.podName,
       }
     }
 
@@ -1051,6 +1034,7 @@ export class PodRunner {
         exitCode,
         containerStatus: mainContainerStatus,
         podStatus: serverPod.status,
+        podName: this.podName,
       })
 
       // We've seen instances where Pods are OOMKilled but the exit code is 0 and the state that
@@ -1209,7 +1193,7 @@ export class PodRunner {
     const collectLogs = async () => result.allLogs || (await this.getMainContainerLogs())
 
     if (result.timedOut) {
-      const errorDetails: PodErrorDetails = { logs: await collectLogs(), result }
+      const errorDetails: PodErrorDetails = { logs: await collectLogs(), result, podName: this.podName }
       throw new PodRunnerTimeoutError({
         message: `Command timed out after ${timeoutSec} seconds.`,
         details: errorDetails,
@@ -1220,6 +1204,7 @@ export class PodRunner {
       const errorDetails: PodErrorDetails = {
         logs: await collectLogs(),
         exitCode: result.exitCode,
+        podName: this.podName,
         result,
       }
       throw new PodRunnerOutOfMemoryError({ message: "Pod container was OOMKilled.", details: errorDetails })
@@ -1233,6 +1218,7 @@ export class PodRunner {
       const errorDetails: PodErrorDetails = {
         logs: await collectLogs(),
         exitCode: result.exitCode,
+        podName: this.podName,
         result,
       }
       throw new PodRunnerWorkloadError({ message: `Failed with exit code ${result.exitCode}.`, details: errorDetails })
@@ -1272,7 +1258,7 @@ export class PodRunner {
     })
 
     if (some(events, (event) => event.reason === "Killing")) {
-      const details: PodErrorDetails = { podEvents: events }
+      const details: PodErrorDetails = { podEvents: events, podName: this.podName }
       throw new PodRunnerNotFoundError({ details })
     }
   }

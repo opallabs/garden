@@ -21,10 +21,14 @@ import type { ValidResultType } from "../tasks/base.js"
 import type { BaseGardenResource, GardenResourceInternalFields } from "../config/base.js"
 import type { LinkedSource } from "../config-store/local.js"
 import type { GardenApiVersion } from "../constants.js"
+import type { ResolvedTemplate } from "../template/types.js"
+import type { VariablesContext } from "../config/template-contexts/variables.js"
 
 // TODO: split this file
 
 export type { ActionKind } from "../plugin/action-types.js"
+
+export type { ActionVersion } from "../vcs/vcs.js"
 
 export const actionKinds: ActionKind[] = ["Build", "Deploy", "Run", "Test"]
 export const actionKindsLower = actionKinds.map((k) => k.toLowerCase())
@@ -63,7 +67,6 @@ export interface BaseActionConfig<K extends ActionKind = ActionKind, T = string,
   // -> No templating is allowed on these.
   internal: GardenResourceInternalFields & {
     groupName?: string
-    resolved?: boolean // Set to true if no resolution is required, e.g. set for actions converted from modules
     treeVersion?: TreeVersion // Set during module resolution to avoid duplicate scanning for Build actions
     // For forwards-compatibility, applied on actions returned from module conversion handlers
     remoteClonePath?: string
@@ -111,13 +114,13 @@ export interface ActionConfigTypes {
  *
  * See https://melvingeorge.me/blog/convert-array-into-string-literal-union-type-typescript
  */
-export const actionStateTypes = ["ready", "not-ready", "processing", "failed", "unknown"] as const
-export type ActionState = (typeof actionStateTypes)[number]
+export const actionStates = ["ready", "not-ready", "processing", "failed", "unknown"] as const
+export type ActionState = (typeof actionStates)[number]
 
 export interface ActionStatus<
   T extends BaseAction = BaseAction,
-  D extends {} = any,
-  O extends {} = GetActionOutputType<T>,
+  D extends Record<string, unknown> = any,
+  O extends Record<string, unknown> = GetActionOutputType<T>,
 > extends ValidResultType {
   state: ActionState
   detail: D | null
@@ -134,7 +137,7 @@ export interface ActionDependencyAttributes {
   needsExecutedOutputs: boolean // Set to true if action cannot be resolved without the dependency executed
 }
 
-export type ActionDependency = ActionReference & ActionDependencyAttributes
+export type ActionDependency = ActionReference & ActionDependencyAttributes & { type: string }
 
 export interface ActionModes {
   sync?: boolean
@@ -170,10 +173,10 @@ export interface ActionWrapperParams<C extends BaseActionConfig> {
   remoteSourcePath: string | null
   supportedModes: ActionModes
   treeVersion: TreeVersion
-  variables: DeepPrimitiveMap
+  variables: VariablesContext
 }
 
-export interface ResolveActionParams<C extends BaseActionConfig, StaticOutputs extends {} = any> {
+export interface ResolveActionParams<C extends BaseActionConfig, StaticOutputs extends Record<string, unknown> = any> {
   resolvedGraph: ResolvedConfigGraph
   dependencyResults: GraphResults
   executedDependencies: ExecutedAction[]
@@ -181,26 +184,27 @@ export interface ResolveActionParams<C extends BaseActionConfig, StaticOutputs e
   spec: C["spec"]
   staticOutputs: StaticOutputs
   inputs: DeepPrimitiveMap
-  variables: DeepPrimitiveMap
+  variables: VariablesContext
+  resolvedVariables: Record<string, ResolvedTemplate>
 }
 
 export type ResolvedActionWrapperParams<
   C extends BaseActionConfig,
-  StaticOutputs extends {} = any,
+  StaticOutputs extends Record<string, unknown> = any,
 > = ActionWrapperParams<C> & ResolveActionParams<C, StaticOutputs>
 
 export interface ExecuteActionParams<
   C extends BaseActionConfig = BaseActionConfig,
-  StaticOutputs extends {} = any,
-  RuntimeOutputs extends {} = any,
+  StaticOutputs extends Record<string, unknown> = any,
+  RuntimeOutputs extends Record<string, unknown> = any,
 > {
   status: ActionStatus<BaseAction<C, StaticOutputs>, any, RuntimeOutputs>
 }
 
 export type ExecutedActionWrapperParams<
   C extends BaseActionConfig,
-  StaticOutputs extends {} = any,
-  RuntimeOutputs extends {} = any,
+  StaticOutputs extends Record<string, unknown> = any,
+  RuntimeOutputs extends Record<string, unknown> = any,
 > = ResolvedActionWrapperParams<C, StaticOutputs> & ExecuteActionParams<C, StaticOutputs, RuntimeOutputs>
 
 export type GetActionOutputType<T> = T extends BaseAction<any, infer O> ? O : any

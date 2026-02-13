@@ -14,7 +14,7 @@ import { remove, set } from "lodash-es"
 import type { BaseResource, KubernetesResource, SyncableResource, SyncableRuntimeAction } from "./types.js"
 import type { PrimitiveMap } from "../../config/common.js"
 import {
-  k8sReverseProxyImageName,
+  getK8sReverseProxyImagePath,
   PROXY_CONTAINER_SSH_TUNNEL_PORT,
   PROXY_CONTAINER_SSH_TUNNEL_PORT_NAME,
   PROXY_CONTAINER_USER_NAME,
@@ -71,11 +71,14 @@ export function convertContainerLocalModeSpec(
 }
 
 export const kubernetesLocalModeSchema = () =>
-  containerLocalModeSchema().keys({
-    target: targetResourceSpecSchema().description(
-      "The remote Kubernetes resource to proxy traffic from. If specified, this is used instead of `defaultTarget`."
-    ),
-  }).description(dedent`
+  containerLocalModeSchema()
+    .keys({
+      target: targetResourceSpecSchema().description(
+        "The remote Kubernetes resource to proxy traffic from. If specified, this is used instead of `defaultTarget`."
+      ),
+    })
+    .description(
+      dedent`
     [EXPERIMENTAL] Configures the local application which will send and receive network requests instead of the target resource specified by \`localMode.target\` or \`defaultTarget\`. One of those fields must be specified to enable local mode for the action.
 
     The selected container of the target Kubernetes resource will be replaced by a proxy container which runs an SSH server to proxy requests.
@@ -89,7 +92,8 @@ export const kubernetesLocalModeSchema = () =>
     See the [Local Mode guide](${localModeGuideLink}) for more information.
 
     Note! This feature is still experimental. Some incompatible changes can be made until the first non-experimental release.
-  `)
+  `
+    )
 
 interface BaseLocalModeParams {
   ctx: PluginContext
@@ -382,16 +386,23 @@ function prepareLocalModePorts(): V1ContainerPort[] {
  * @param localModeEnvVars the list of localMode-specific environment variables
  * @param localModePorts the list of localMode-specific ports (e.g. ssh port for tunnel setup)
  */
-function patchSyncableManifest(
-  targetManifest: SyncableResource,
-  containerName: string,
-  localModeEnvVars: PrimitiveMap,
+function patchSyncableManifest({
+  targetManifest,
+  containerName,
+  localModeEnvVars,
+  localModePorts,
+  utilImageRegistryDomain,
+}: {
+  targetManifest: SyncableResource
+  containerName: string
+  localModeEnvVars: PrimitiveMap
   localModePorts: V1ContainerPort[]
-): void {
+  utilImageRegistryDomain: string
+}): void {
   const targetContainer = getResourceContainer(targetManifest, containerName)
 
   // use reverse proxy container image
-  targetContainer.image = k8sReverseProxyImageName
+  targetContainer.image = getK8sReverseProxyImagePath(utilImageRegistryDomain)
   // erase the original container command, the proxy container won't recognize it
   targetContainer.command = []
   // erase the original container arguments, the proxy container won't recognize them
@@ -462,7 +473,7 @@ export async function configureLocalMode(configParams: ConfigureLocalModeParams)
 
   // Logging this on the debug level because it can be displayed multiple times due to getServiceStatus checks
   log.debug(
-    `Configuring in local mode, proxy container ${styles.underline(k8sReverseProxyImageName)} will be deployed.`
+    `Configuring in local mode, proxy container ${styles.underline(getK8sReverseProxyImagePath(provider.config.utilImageRegistryDomain))} will be deployed.`
   )
 
   set(resolvedTarget, ["metadata", "annotations", gardenAnnotationKey("mode")], "local")
@@ -478,7 +489,13 @@ export async function configureLocalMode(configParams: ConfigureLocalModeParams)
   const localModeEnvVars = await prepareLocalModeEnvVars(portSpecs, keyPair)
   const localModePorts = prepareLocalModePorts()
 
-  patchSyncableManifest(resolvedTarget, targetContainer.name, localModeEnvVars, localModePorts)
+  patchSyncableManifest({
+    targetManifest: resolvedTarget,
+    containerName: targetContainer.name,
+    localModeEnvVars,
+    localModePorts,
+    utilImageRegistryDomain: provider.config.utilImageRegistryDomain,
+  })
 
   // Replace the original resource with the modified spec
   const preparedManifests = manifests

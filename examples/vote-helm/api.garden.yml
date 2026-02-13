@@ -3,6 +3,7 @@ description: The API backend for the voting UI
 type: helm
 name: api
 dependencies:
+  - build.api-image
   - deploy.redis
 variables:
   repository: ${actions.build.api-image.outputs.deployment-image-name}
@@ -16,6 +17,7 @@ spec:
     image:
       repository: ${var.repository}
       tag: ${var.tag}
+    imagePullSecrets: ${var.imagePullSecrets}
     ingress:
       enabled: true
       paths: [/]

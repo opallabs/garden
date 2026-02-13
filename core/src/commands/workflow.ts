@@ -19,11 +19,9 @@ import type { GardenError } from "../exceptions.js"
 import { ChildProcessError, InternalError, RuntimeError, WorkflowScriptError, toGardenError } from "../exceptions.js"
 import type { WorkflowStepResult } from "../config/template-contexts/workflow.js"
 import { WorkflowConfigContext, WorkflowStepConfigContext } from "../config/template-contexts/workflow.js"
-import { resolveTemplateStrings, resolveTemplateString } from "../template-string/template-string.js"
 import { ConfigurationError, FilesystemError } from "../exceptions.js"
 import { posix, join } from "path"
 import fsExtra from "fs-extra"
-const { ensureDir, writeFile } = fsExtra
 import { getDurationMsec, toEnvVars } from "../util/util.js"
 import { runScript } from "../util/util.js"
 import { LogLevel } from "../logger/logger.js"
@@ -35,6 +33,11 @@ import type { GardenCli } from "../cli/cli.js"
 import { getCustomCommands } from "./custom.js"
 import { getBuiltinCommands } from "./commands.js"
 import { styles } from "../logger/styles.js"
+import { deepEvaluate } from "../template/evaluate.js"
+import { throwOnMissingSecretKeys } from "../config/secrets.js"
+import { RemoteSourceConfigContext } from "../config/template-contexts/project.js"
+
+const { ensureDir, writeFile } = fsExtra
 
 const runWorkflowArgs = {
   workflow: new StringParameter({
@@ -78,6 +81,16 @@ export class WorkflowCommand extends Command<Args, {}> {
     // Prepare any configured files before continuing
     const workflow = await garden.getWorkflowConfig(args.workflow)
 
+    throwOnMissingSecretKeys({
+      configs: [workflow],
+      context: new RemoteSourceConfigContext(garden, garden.variables),
+      secrets: garden.secrets,
+      prefix: workflow.kind,
+      isLoggedIn: garden.isLoggedIn(),
+      cloudBackendDomain: garden.cloudDomain,
+      log,
+    })
+
     // Merge any workflow-level environment variables into process.env.
     for (const [key, value] of Object.entries(toEnvVars(workflow.envVars))) {
       process.env[key] = value
@@ -86,11 +99,11 @@ export class WorkflowCommand extends Command<Args, {}> {
     await registerAndSetUid(garden, log, workflow)
     garden.events.emit("workflowRunning", {})
     const templateContext = new WorkflowConfigContext(garden, garden.variables)
-    const yamlDoc = workflow.internal.yamlDoc
-    const files = resolveTemplateStrings({
-      value: workflow.files || [],
+
+    // @ts-expect-error todo: correct types for unresolved configs
+    const files: WorkflowFileSpec[] = deepEvaluate(workflow.files || [], {
       context: templateContext,
-      source: { yamlDoc, basePath: ["files"] },
+      opts: {},
     })
 
     // Write all the configured files for the workflow
@@ -172,15 +185,14 @@ export class WorkflowCommand extends Command<Args, {}> {
 
       try {
         if (step.command) {
-          step.command = resolveTemplateStrings({
-            value: step.command,
+          step.command = deepEvaluate(step.command, {
             context: stepTemplateContext,
-            source: { yamlDoc, basePath: ["steps", index, "command"] },
+            opts: {},
           }).filter((arg) => !!arg)
 
           stepResult = await runStepCommand(stepParams)
         } else if (step.script) {
-          step.script = resolveTemplateString({ string: step.script, context: stepTemplateContext })
+          step.script = deepEvaluate(step.script, { context: stepTemplateContext, opts: {} }) as string
           stepResult = await runStepScript(stepParams)
         } else {
           stepResult = undefined
@@ -525,17 +537,18 @@ export function logErrors(
 }
 
 async function registerAndSetUid(garden: Garden, log: Log, config: WorkflowConfig) {
-  const { cloudApi } = garden
-  if (cloudApi) {
-    const workflowRunUid = await registerWorkflowRun({
-      garden,
-      workflowConfig: config,
-      environment: garden.environmentName,
-      namespace: garden.namespace,
-      log,
-    })
-    garden.events.emit("_workflowRunRegistered", { workflowRunUid })
+  if (!garden.isOldBackendAvailable()) {
+    return
   }
+
+  const workflowRunUid = await registerWorkflowRun({
+    garden,
+    workflowConfig: config,
+    environment: garden.environmentName,
+    namespace: garden.namespace,
+    log,
+  })
+  garden.events.emit("_workflowRunRegistered", { workflowRunUid })
 }
 
 async function writeWorkflowFile(garden: Garden, file: WorkflowFileSpec) {

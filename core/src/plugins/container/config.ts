@@ -33,6 +33,8 @@ import type { OctalPermissionMask } from "../kubernetes/types.js"
 import { templateStringLiteral } from "../../docs/common.js"
 import { syncGuideLink } from "../kubernetes/constants.js"
 import { makeSecret, type Secret } from "../../util/secrets.js"
+import { makeDeprecationMessage } from "../../util/deprecations.js"
+import type { ActionKind } from "../../plugin/action-types.js"
 
 export const defaultDockerfileName = "Dockerfile"
 
@@ -417,6 +419,9 @@ export const containerLocalModeSchema = createSchema({
       ),
     restart: localModeRestartSchema(),
   }),
+  meta: {
+    deprecated: makeDeprecationMessage({ deprecation: "localMode" }),
+  },
 })
 
 const annotationsSchema = memoize(() =>
@@ -659,7 +664,10 @@ const volumeSchema = createSchema({
 
         Note: Make sure to pay attention to the supported \`accessModes\` of the referenced volume. Unless it supports the ReadWriteMany access mode, you'll need to make sure it is not configured to be mounted by multiple services at the same time. Refer to the documentation of the module type in question to learn more.
         `
-      ),
+      )
+      .meta({
+        deprecated: makeDeprecationMessage({ deprecation: "containerVolumeActions" }),
+      }),
   }),
   oxor: [["hostPath", "action"]],
 })
@@ -730,7 +738,7 @@ export interface ContainerDeploySpec extends ContainerCommonDeploySpec {
 
 export type ContainerDeployActionConfig = DeployActionConfig<"container", ContainerDeploySpec>
 
-export interface ContainerDeployOutputs {
+export type ContainerDeployOutputs = {
   deployedImageId: string
 }
 
@@ -825,7 +833,7 @@ export const containerDeploySchema = createSchema({
 export interface ContainerRegistryConfig {
   hostname: string
   port?: number
-  namespace: string
+  namespace?: string
   insecure: boolean
 }
 
@@ -840,7 +848,7 @@ export const containerRegistryConfigSchema = createSchema({
     port: joi.number().integer().description("The port where the registry listens on, if not the default."),
     namespace: joi
       .string()
-      .default("_")
+      .optional()
       .description(
         "The registry namespace. Will be placed between hostname and image name, like so: <hostname>/<namespace>/<image name>"
       )
@@ -894,7 +902,7 @@ const artifactsSchema = memoize(() =>
     .example([{ source: "/report/**/*" }])
 )
 
-export interface ContainerTestOutputs {
+export type ContainerTestOutputs = {
   log: string
 }
 
@@ -915,15 +923,21 @@ export interface ContainerTestActionSpec extends ContainerCommonRuntimeSpec {
   artifacts: ArtifactSpec[]
   image?: string
   volumes: ContainerVolumeSpec[]
+  cacheResult: boolean
 }
 
 export type ContainerTestActionConfig = TestActionConfig<"container", ContainerTestActionSpec>
 export type ContainerTestAction = TestAction<ContainerTestActionConfig, ContainerTestOutputs>
 
-export const containerTestSpecKeys = memoize(() => ({
+export const containerRunAndTestSpecKeys = memoize((kind: ActionKind) => ({
   ...containerCommonRuntimeSchemaKeys(),
   artifacts: artifactsSchema(),
   image: containerImageSchema(),
+  cacheResult: runCacheResultSchema(kind),
+}))
+
+export const containerTestSpecKeys = memoize(() => ({
+  ...containerRunAndTestSpecKeys("Test"),
 }))
 
 export const containerTestActionSchema = createSchema({
@@ -937,16 +951,13 @@ export type ContainerRunOutputs = ContainerTestOutputs
 
 export const containerRunOutputSchema = () => containerTestOutputSchema()
 
-export interface ContainerRunActionSpec extends ContainerTestActionSpec {
-  cacheResult: boolean
-}
+export type ContainerRunActionSpec = ContainerTestActionSpec
 
 export type ContainerRunActionConfig = RunActionConfig<"container", ContainerRunActionSpec>
 export type ContainerRunAction = RunAction<ContainerRunActionConfig, ContainerRunOutputs>
 
 export const containerRunSpecKeys = memoize(() => ({
-  ...containerTestSpecKeys(),
-  cacheResult: runCacheResultSchema(),
+  ...containerRunAndTestSpecKeys("Run"),
 }))
 
 export const containerRunActionSchema = createSchema({
@@ -956,7 +967,7 @@ export const containerRunActionSchema = createSchema({
 
 // BUILD //
 
-export interface ContainerBuildOutputs {
+export type ContainerBuildOutputs = {
   "localImageName": string
   "localImageId": string
   "deploymentImageName": string

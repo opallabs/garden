@@ -20,14 +20,17 @@ import {
 } from "../../../../../../src/plugins/kubernetes/container/ingress.js"
 import type { ContainerDeployAction } from "../../../../../../src/plugins/container/moduleConfig.js"
 import type { ServicePortProtocol, ContainerIngressSpec } from "../../../../../../src/plugins/container/moduleConfig.js"
-import { getContainerTestGarden } from "./container.js"
 import type { PartialBy } from "../../../../../../src/util/util.js"
 import type { Resolved } from "../../../../../../src/actions/types.js"
 import { actionFromConfig } from "../../../../../../src/graph/actions.js"
 import type { DeployAction } from "../../../../../../src/actions/deploy.js"
 import { DEFAULT_DEPLOY_TIMEOUT_SEC } from "../../../../../../src/constants.js"
 import { uuidv4 } from "../../../../../../src/util/random.js"
-import { defaultSystemNamespace } from "../../../../../../src/plugins/kubernetes/constants.js"
+import {
+  defaultSystemNamespace,
+  defaultUtilImageRegistryDomain,
+} from "../../../../../../src/plugins/kubernetes/constants.js"
+import { getEmptyGardenWithLocalK8sProvider } from "../../../../helpers.js"
 
 const namespace = "my-namespace"
 const ports = [
@@ -43,6 +46,7 @@ type PartialConfig = PartialBy<KubernetesConfig, "context">
 
 const basicConfig: PartialConfig = {
   name: "local-kubernetes",
+  utilImageRegistryDomain: defaultUtilImageRegistryDomain,
   buildMode: "local-docker",
   defaultHostname: "hostname.invalid",
   deploymentRegistry: {
@@ -298,7 +302,6 @@ const wildcardDomainCertSecret = {
 
 describe("createIngressResources", () => {
   let garden: Garden
-  let cleanup: (() => void) | undefined
   let context: string
   let basicProvider: KubernetesProvider
   let singleTlsProvider: KubernetesProvider
@@ -310,8 +313,8 @@ describe("createIngressResources", () => {
     }
   })
 
-  beforeEach(async () => {
-    ;({ garden, cleanup } = await getContainerTestGarden())
+  before(async () => {
+    garden = await getEmptyGardenWithLocalK8sProvider()
     const provider = (await garden.resolveProvider({ log: garden.log, name: "local-kubernetes" })) as KubernetesProvider
     context = provider.config.context
 
@@ -327,7 +330,7 @@ describe("createIngressResources", () => {
       dashboardPages: [],
       outputs: {},
       state: "ready",
-    }
+    } as const
 
     multiTlsProvider = {
       name: "kubernetes",
@@ -339,7 +342,7 @@ describe("createIngressResources", () => {
       dashboardPages: [],
       outputs: {},
       state: "ready",
-    }
+    } as const
 
     singleTlsProvider = {
       name: "kubernetes",
@@ -351,13 +354,7 @@ describe("createIngressResources", () => {
       dashboardPages: [],
       outputs: {},
       state: "ready",
-    }
-  })
-
-  afterEach(async () => {
-    if (cleanup) {
-      cleanup()
-    }
+    } as const
   })
 
   async function resolveContainerDeployAction(

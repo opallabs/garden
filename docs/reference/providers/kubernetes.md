@@ -37,13 +37,22 @@ providers:
     # disables the provider. To use a provider in all environments, omit this field.
     environments:
 
+    # The container registry domain that should be used for pulling Garden utility images (such as the
+    # image used in the Kubernetes sync utility Pod).
+    #
+    # If you have your own Docker Hub registry mirror, you can set the domain here and the utility images
+    # will be pulled from there. This can be useful to e.g. avoid Docker Hub rate limiting.
+    #
+    # Otherwise the utility images are pulled directly from Docker Hub by default.
+    utilImageRegistryDomain: docker.io
+
     # Choose the mechanism for building container images before deploying. By default your local Docker daemon is
     # used, but you can set it to `cluster-buildkit`, `kaniko`, or `nix` to sync files to the cluster, and build
     # container images there. This removes the need to run Docker locally, and allows you to share layer and image
     # caches between multiple developers, as well as between your development and CI workflows.
     #
     # For more details on all the different options and what makes sense to use for your setup, please check out the
-    # [in-cluster building guide](https://docs.garden.io/kubernetes-plugins/guides/in-cluster-building).
+    # [in-cluster building guide](https://docs.garden.io/bonsai-0.13/kubernetes-plugins/guides/in-cluster-building).
     buildMode: local-docker
 
     # Configuration options for the `cluster-buildkit` build mode.
@@ -71,7 +80,7 @@ providers:
       # | Google Cloud Artifact Registry  | `pkg.dev`                        | Yes                          |
       # | Azure Container Registry        | `azurecr.io`                     | Yes                          |
       # | GitHub Container Registry       | `ghcr.io`                        | Yes                          |
-      # | DockerHub                       | `hub.docker.com`                 | Yes                          |
+      # | DockerHub                       | `index.docker.io`                | Yes                          |
       # | Any other registry              |                                    | No                           |
       #
       # In case you need to override the defaults for your registry, you can do it like so:
@@ -130,7 +139,7 @@ providers:
 
             # The registry namespace. Will be placed between hostname and image name, like so:
             # <hostname>/<namespace>/<image name>
-            namespace: _
+            namespace:
 
             # Set to true to allow insecure connections to the registry (without SSL).
             insecure: false
@@ -406,6 +415,9 @@ providers:
     # A default hostname to use when no hostname is explicitly configured for a service.
     defaultHostname:
 
+    # Sets the deployment strategy for `container` deploy actions.
+    deploymentStrategy:
+
     # Configuration options for code synchronization.
     sync:
       # Specifies default settings for syncs (e.g. for `container`, `kubernetes` and `helm` services).
@@ -414,7 +426,8 @@ providers:
       #
       # Sync is enabled e.g by setting the `--sync` flag on the `garden deploy` command.
       #
-      # See the [Code Synchronization guide](https://docs.garden.io/guides/code-synchronization) for more information.
+      # See the [Code Synchronization guide](https://docs.garden.io/bonsai-0.13/guides/code-synchronization) for more
+      # information.
       defaults:
         # Specify a list of POSIX-style paths or glob patterns that should be excluded from the sync.
         #
@@ -524,6 +537,30 @@ providers:
           # Ephemeral storage request in megabytes.
           ephemeralStorage:
 
+      # Resource requests and limits for the code sync service, which we use to sync build contexts to the cluster
+      # ahead of building images. This generally is not resource intensive, but you might want to adjust the
+      # defaults if you have many concurrent users.
+      sync:
+        limits:
+          # CPU limit in millicpu.
+          cpu: 500
+
+          # Memory limit in megabytes.
+          memory: 512
+
+          # Ephemeral storage limit in megabytes.
+          ephemeralStorage:
+
+        requests:
+          # CPU request in millicpu.
+          cpu: 100
+
+          # Memory request in megabytes.
+          memory: 90
+
+          # Ephemeral storage request in megabytes.
+          ephemeralStorage:
+
     # One or more certificates to use for ingress.
     tlsCertificates:
       - # A unique identifier for this certificate.
@@ -569,7 +606,7 @@ providers:
 
       # The registry namespace. Will be placed between hostname and image name, like so: <hostname>/<namespace>/<image
       # name>
-      namespace: _
+      namespace:
 
       # Set to true to allow insecure connections to the registry (without SSL).
       insecure: false
@@ -665,13 +702,29 @@ providers:
       - stage
 ```
 
+### `providers[].utilImageRegistryDomain`
+
+[providers](#providers) > utilImageRegistryDomain
+
+The container registry domain that should be used for pulling Garden utility images (such as the
+image used in the Kubernetes sync utility Pod).
+
+If you have your own Docker Hub registry mirror, you can set the domain here and the utility images
+will be pulled from there. This can be useful to e.g. avoid Docker Hub rate limiting.
+
+Otherwise the utility images are pulled directly from Docker Hub by default.
+
+| Type     | Default       | Required |
+| -------- | ------------- | -------- |
+| `string` | `"docker.io"` | No       |
+
 ### `providers[].buildMode`
 
 [providers](#providers) > buildMode
 
 Choose the mechanism for building container images before deploying. By default your local Docker daemon is used, but you can set it to `cluster-buildkit`, `kaniko`, or `nix` to sync files to the cluster, and build container images there. This removes the need to run Docker locally, and allows you to share layer and image caches between multiple developers, as well as between your development and CI workflows.
 
-For more details on all the different options and what makes sense to use for your setup, please check out the [in-cluster building guide](https://docs.garden.io/kubernetes-plugins/guides/in-cluster-building).
+For more details on all the different options and what makes sense to use for your setup, please check out the [in-cluster building guide](https://docs.garden.io/bonsai-0.13/kubernetes-plugins/guides/in-cluster-building).
 
 | Type     | Allowed Values                                      | Default          | Required |
 | -------- | --------------------------------------------------- | ---------------- | -------- |
@@ -716,7 +769,7 @@ See the following table for details on our detection mechanism:
 | Google Cloud Artifact Registry  | `pkg.dev`                        | Yes                          |
 | Azure Container Registry        | `azurecr.io`                     | Yes                          |
 | GitHub Container Registry       | `ghcr.io`                        | Yes                          |
-| DockerHub                       | `hub.docker.com`                 | Yes                          |
+| DockerHub                       | `index.docker.io`                | Yes                          |
 | Any other registry              |                                    | No                           |
 
 In case you need to override the defaults for your registry, you can do it like so:
@@ -824,9 +877,9 @@ The port where the registry listens on, if not the default.
 
 The registry namespace. Will be placed between hostname and image name, like so: <hostname>/<namespace>/<image name>
 
-| Type     | Default | Required |
-| -------- | ------- | -------- |
-| `string` | `"_"`   | No       |
+| Type     | Required |
+| -------- | -------- |
+| `string` | No       |
 
 Example:
 
@@ -1615,20 +1668,15 @@ providers:
 {% endhint %}
 
 {% hint style="warning" %}
-**Deprecated**: This field will be removed in a future release.
+**Deprecated**: The `deploymentStrategy` config field will be removed in Garden 0.14.
+Do not use this config field. It has no effect as the experimental support for blue/green deployments (via the `blue-green` strategy) has been removed.
 {% endhint %}
 
 Sets the deployment strategy for `container` deploy actions.
 
-Note that this field has been deprecated since 0.13, and has no effect.
-The `"rolling"` will be applied in all cases.
-The experimental support for blue/green deployments (via the `"blue-green"` strategy) has been removed.
-
-Note that this setting only applies to `container` deploy actions (and not, for example,  `kubernetes` or `helm` deploy actions).
-
-| Type     | Default     | Required |
-| -------- | ----------- | -------- |
-| `string` | `"rolling"` | No       |
+| Type     | Required |
+| -------- | -------- |
+| `string` | No       |
 
 ### `providers[].sync`
 
@@ -1650,7 +1698,7 @@ These are overridden/extended by the settings of any individual sync specs.
 
 Sync is enabled e.g by setting the `--sync` flag on the `garden deploy` command.
 
-See the [Code Synchronization guide](https://docs.garden.io/guides/code-synchronization) for more information.
+See the [Code Synchronization guide](https://docs.garden.io/bonsai-0.13/guides/code-synchronization) for more information.
 
 | Type     | Required |
 | -------- | -------- |
@@ -2162,7 +2210,7 @@ providers:
 [providers](#providers) > [resources](#providersresources) > sync
 
 {% hint style="warning" %}
-**Deprecated**: This field will be removed in a future release.
+**Deprecated**: The sync service is only used for the cluster-docker build mode, which is being deprecated.
 {% endhint %}
 
 Resource requests and limits for the code sync service, which we use to sync build contexts to the cluster
@@ -2559,9 +2607,9 @@ The port where the registry listens on, if not the default.
 
 The registry namespace. Will be placed between hostname and image name, like so: <hostname>/<namespace>/<image name>
 
-| Type     | Default | Required |
-| -------- | ------- | -------- |
-| `string` | `"_"`   | No       |
+| Type     | Required |
+| -------- | -------- |
+| `string` | No       |
 
 Example:
 

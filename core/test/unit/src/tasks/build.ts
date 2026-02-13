@@ -68,7 +68,7 @@ describe("BuildTask", () => {
     })
     garden = await TestGarden.factory(tmpDir.path, { config, plugins: [testPlugin] })
 
-    garden.setActionConfigs([
+    garden.setPartialActionConfigs([
       {
         name: "test-build",
         type: "test",
@@ -119,7 +119,7 @@ describe("BuildTask", () => {
           payload: {
             actionName: "test-build",
             actionVersion,
-            actionType: "build",
+            actionType: "test",
             actionKind: "build",
             actionUid,
             moduleName: null,
@@ -137,7 +137,7 @@ describe("BuildTask", () => {
           payload: {
             actionName: "test-build",
             actionVersion,
-            actionType: "build",
+            actionType: "test",
             actionKind: "build",
             actionUid,
             moduleName: null,
@@ -156,7 +156,7 @@ describe("BuildTask", () => {
           payload: {
             actionName: "test-build",
             actionVersion,
-            actionType: "build",
+            actionType: "test",
             actionKind: "build",
             actionUid,
             moduleName: null,
@@ -174,7 +174,7 @@ describe("BuildTask", () => {
           payload: {
             actionName: "test-build",
             actionVersion,
-            actionType: "build",
+            actionType: "test",
             actionKind: "build",
             actionUid,
             moduleName: null,

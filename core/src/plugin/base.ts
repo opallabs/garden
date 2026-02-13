@@ -113,7 +113,7 @@ export const runBaseParams = () => ({
   artifactsPath: artifactsPathSchema(),
 })
 
-// Action runtime type and schema. Used for the Cloud Builder UI, and maybe in the future Cloud Runner UI, etc.
+// Action runtime type and schema. Used for the Container Builder UI, and maybe in the future Cloud Runner UI, etc.
 export type ActionRuntime =
   | {
       actual: ActionRuntimeKind
@@ -151,7 +151,7 @@ export type ActionRuntimeRemotePlugin = {
 }
 
 // TODO-0.13.0: update this schema in 0.13.0
-export interface RunResult {
+export type RunResult = {
   success: boolean
   exitCode?: number
   // FIXME: we should avoid native Date objects
@@ -182,14 +182,15 @@ export const artifactsPathSchema = memoize(() =>
   joi.string().required().description("A directory path where the handler should write any exported artifacts to.")
 )
 
-export type RunState = "outdated" | "unknown" | "running" | "succeeded" | "failed" | "not-implemented"
+export const runStates = ["outdated", "unknown", "running", "succeeded", "failed", "not-implemented"] as const
+export type RunState = (typeof runStates)[number]
 
 export interface RunStatusForEventPayload {
   state: RunState
 }
 
 export const outputSchemaDocs = dedent`
-  The schema must be a single level object, with string keys. Each value must be a primitive (null, boolean, number or string).
+  The schema must be a single level object, with string keys. Each vaue must be a primitive (null, boolean, number or string).
 
   If no schema is provided, an error may be thrown if a plugin handler attempts to return an output key.
 

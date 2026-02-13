@@ -12,6 +12,7 @@ import { envVarRegex, identifierRegex, joiIdentifierDescription, userIdentifierR
 
 // Add metadata support to schemas. See https://github.com/colinhacks/zod/issues/273#issuecomment-1434077058
 declare module "zod" {
+  // eslint-disable-next-line @typescript-eslint/no-shadow
   interface ZodType {
     getMetadata(): Record<string, any>
     setMetadata(meta: Record<string, any>): this
@@ -83,7 +84,7 @@ type GardenSchema = typeof z & {
  */
 export function renderZodError(error: z.ZodError): string {
   return error.issues
-    .map((i: Zod.ZodIssue) => {
+    .map((i: z.ZodIssue) => {
       if (i.message === "Required" && i["expected"] && i["received"]) {
         return `Expected ${i["expected"]}, but received ${i["received"]}`
       } else {

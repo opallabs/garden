@@ -9,18 +9,17 @@
 import handlebars from "handlebars"
 import { dirname, resolve } from "node:path"
 import { writeCommandReferenceDocs } from "./commands.js"
-import { TEMPLATES_DIR, renderProjectConfigReference, renderConfigReference } from "./config.js"
+import { renderConfigReference, renderProjectConfigReference, TEMPLATES_DIR } from "./config.js"
 import { writeTemplateStringReferenceDocs } from "./template-strings.js"
 import { writeTableOfContents } from "./table-of-contents.js"
 import { Garden } from "../garden.js"
 import { defaultDotIgnoreFile } from "../util/fs.js"
 import { keyBy } from "lodash-es"
 import fsExtra from "fs-extra"
-const { writeFileSync, readFile, writeFile, mkdirp } = fsExtra
-import { renderModuleTypeReference, moduleTypes } from "./module-type.js"
+import { moduleTypes, renderModuleTypeReference } from "./module-type.js"
 import { renderProviderReference } from "./provider.js"
 import { defaultEnvironment, defaultNamespace } from "../config/project.js"
-import type { GardenPluginSpec, GardenPluginReference } from "../plugin/plugin.js"
+import type { GardenPluginReference, GardenPluginSpec } from "../plugin/plugin.js"
 import { workflowConfigSchema } from "../config/workflow.js"
 import { configTemplateSchema } from "../config/config-template.js"
 import { renderActionTypeReference } from "./action-type.js"
@@ -30,10 +29,14 @@ import { pMemoizeClearAll } from "../lib/p-memoize.js"
 import { makeDocsLinkOpts } from "./common.js"
 import { GardenApiVersion } from "../constants.js"
 import { actionKinds } from "../actions/types.js"
-
 import { fileURLToPath } from "node:url"
+import dedent from "dedent"
+import { getDeprecations } from "../util/deprecations.js"
+
+const { writeFileSync, readFile, writeFile, mkdirp } = fsExtra
 
 const moduleDirName = dirname(fileURLToPath(import.meta.url))
+
 /* eslint-disable no-console */
 
 export async function generateDocs(targetDir: string, getPlugins: () => (GardenPluginSpec | GardenPluginReference)[]) {
@@ -47,6 +50,8 @@ export async function generateDocs(targetDir: string, getPlugins: () => (GardenP
   writeTemplateStringReferenceDocs(docsRoot)
   console.log("Generating table of contents...")
   await writeTableOfContents(docsRoot, "README.md")
+  console.log("Updating the deprecation guide...")
+  await updateDeprecationGuide(docsRoot, "guides/deprecations.md")
 }
 
 export async function writeConfigReferenceDocs(
@@ -166,7 +171,7 @@ export async function writeConfigReferenceDocs(
 
   const deprecationWarning = `
   {% hint style="warning" %}
-  Modules are deprecated and will be removed in version \`0.14\`. Please use [action](../../using-garden/actions.md)-based configuration instead. See the [0.12 to Bonsai migration guide](../../guides/migrating-to-bonsai.md) for details.
+  Modules are deprecated and planned to be removed. We do not recommend using modules. Please use [action](../../using-garden/actions.md)-based configuration instead. See the [0.12 to Bonsai migration guide](../../guides/migrating-to-bonsai.md) for details.
   {% endhint %}
   `
   moduleReadme.push(deprecationWarning)
@@ -198,4 +203,50 @@ export async function writeConfigReferenceDocs(
   await renderConfigTemplate("workflow", renderConfigReference(workflowConfigSchema()))
   await renderConfigTemplate("config-template", renderConfigReference(configTemplateSchema()))
   await renderConfigTemplate("render-template", renderConfigReference(renderTemplateConfigSchema()))
+}
+
+async function updateDeprecationGuide(docsRoot: string, deprecationGuideFilename: string) {
+  const guide = resolve(docsRoot, deprecationGuideFilename)
+  const contents = (await readFile(guide)).toString()
+
+  const marker = "<!-- DO NOT CHANGE BELOW - AUTO-GENERATED -->"
+
+  const humanGenerated = contents.split(marker)[0]
+
+  // apply style for docs, using backticks instead of ansi codes
+  const deprecations = getDeprecations((s) => `\`${s}\``)
+
+  const contexts = new Set<string>()
+  for (const [_, { docsSection }] of Object.entries(deprecations)) {
+    contexts.add(docsSection)
+  }
+
+  const breakingChanges: string[] = []
+
+  for (const context of contexts) {
+    breakingChanges.push(`# ${context}`)
+
+    const matchingDeprecations = Object.entries(deprecations).filter(([_, { docsSection }]) => docsSection === context)
+    for (const [id, { warnHint, docs }] of matchingDeprecations) {
+      // NOTE: We are using HTML tags rather than using markdown syntax here, so we can control the `id` of the link (As we are deeplinking from the deprecation warnings in core)
+      const htmlHeadline = getDeprecations((s) => `<code>${s}</code>`)[id].docsHeadline
+      breakingChanges.push(`<h2 id="${id.toLowerCase()}">${htmlHeadline}</h2>`)
+      breakingChanges.push(warnHint)
+      if (docs) {
+        breakingChanges.push(docs)
+      }
+    }
+  }
+
+  await writeFile(
+    guide,
+    dedent`
+    ${humanGenerated.trimEnd()}
+
+    ${marker}
+    <!-- This section is auto-generated by \`npm run generate-docs\`. Any changes above these comments will be preserved. Make changes to deprecations in \`deprecations.ts\`. -->
+
+    ${breakingChanges.join("\n\n")}
+    `
+  )
 }

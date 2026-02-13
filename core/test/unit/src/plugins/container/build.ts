@@ -9,7 +9,7 @@
 import { expect } from "chai"
 import { join } from "path"
 import sinon from "sinon"
-import type { ResolvedBuildAction, BuildActionConfig } from "../../../../../src/actions/build.js"
+import type { ResolvedBuildAction } from "../../../../../src/actions/build.js"
 import type { ConfigGraph } from "../../../../../src/graph/config-graph.js"
 import type { ActionLog, Log } from "../../../../../src/logger/log-entry.js"
 import { createActionLog } from "../../../../../src/logger/log-entry.js"
@@ -140,7 +140,7 @@ context("build.ts", () => {
       sinon.replace(containerHelpers, "checkDockerServerVersion", () => null)
     })
 
-    function getCmdArgs(action: ResolvedBuildAction<BuildActionConfig<any, any>, any>, buildPath: string) {
+    function getCmdArgs(action: ResolvedBuildAction, buildPath: string) {
       return [
         "buildx",
         "build",
@@ -148,6 +148,10 @@ context("build.ts", () => {
         `GARDEN_MODULE_VERSION=${action.versionString()}`,
         "--build-arg",
         `GARDEN_ACTION_VERSION=${action.versionString()}`,
+        "--progress",
+        "rawjson",
+        "--metadata-file",
+        "/tmp/a-unique-path/metadata.json",
         "--tag",
         "some/image",
         "--file",
@@ -167,9 +171,12 @@ context("build.ts", () => {
       const cmdArgs = getCmdArgs(action, buildPath)
       sinon.replace(containerHelpers, "dockerCli", async ({ cwd, args, ctx: _ctx }) => {
         expect(cwd).to.equal(buildPath)
+        // metadata.json is always at a unique path - we need to replace the filename for the assertion
+        const idx = args.indexOf("--metadata-file") + 1
+        args[idx] = "/tmp/a-unique-path/metadata.json"
         expect(args).to.eql(cmdArgs)
         expect(_ctx).to.exist
-        return { all: "log", stdout: "", stderr: "", code: 0, proc: <any>null }
+        return { all: "log", stdout: "", stderr: "", code: 0, proc: null }
       })
       const result = await buildContainer({ ctx, log: actionLog, action })
       expect(result.state).to.eql("ready")
@@ -192,9 +199,12 @@ context("build.ts", () => {
       const cmdArgs = getCmdArgs(action, buildPath)
       sinon.replace(containerHelpers, "dockerCli", async ({ cwd, args, ctx: _ctx }) => {
         expect(cwd).to.equal(buildPath)
+        // metadata.json is always at a unique path - we need to replace the filename for the assertion
+        const idx = args.indexOf("--metadata-file") + 1
+        args[idx] = "/tmp/a-unique-path/metadata.json"
         expect(args).to.eql(cmdArgs)
         expect(_ctx).to.exist
-        return { all: "log", stdout: "", stderr: "", code: 0, proc: <any>null }
+        return { all: "log", stdout: "", stderr: "", code: 0, proc: null }
       })
       const result = await buildContainer({ ctx, log: actionLog, action })
       expect(result.state).to.eql("ready")

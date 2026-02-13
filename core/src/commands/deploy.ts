@@ -30,6 +30,7 @@ import { gardenEnv } from "../constants.js"
 import type { DeployAction } from "../actions/deploy.js"
 import { watchParameter, watchRemovedWarning } from "./util/watch-parameter.js"
 import { styles } from "../logger/styles.js"
+import { reportDeprecatedFeatureUsage } from "../util/deprecations.js"
 
 export const deployArgs = {
   names: new StringsParameter({
@@ -171,6 +172,13 @@ export class DeployCommand extends Command<Args, Opts> {
 
   async action(params: CommandParams<Args, Opts>): Promise<CommandResult<ProcessCommandResult>> {
     const { garden, log, args, opts } = params
+
+    if (opts["local-mode"] !== undefined) {
+      reportDeprecatedFeatureUsage({
+        log,
+        deprecation: "localMode",
+      })
+    }
 
     this.garden = garden
     const commandLog = log.createLog({ name: "garden" })
@@ -337,7 +345,7 @@ export class DeployCommand extends Command<Args, Opts> {
       return task
     })
 
-    const results = await garden.processTasks({ tasks, log })
+    const results = await garden.processTasks({ tasks })
 
     return handleProcessResults(garden, log, "deploy", results)
   }

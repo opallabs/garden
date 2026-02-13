@@ -17,10 +17,11 @@ export abstract class BaseKeyDescription<T = any> {
   abstract description?: string
   abstract example?: T
   abstract deprecated: boolean
+  abstract deprecationMessage: string | undefined
   abstract experimental: boolean
   abstract required: boolean
 
-  constructor(
+  protected constructor(
     public name: string | undefined,
     public level: number,
     public parent?: BaseKeyDescription

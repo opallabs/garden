@@ -1,6 +1,6 @@
-#!/usr/bin/env -S node --import ./scripts/register-hook.js
+#!/usr/bin/env tsx
 /*
- * Copyright (C) 2018-2024 Garden Technologies, Inc. <info@garden.io>
+ * Copyright (C) 2018-2025 Garden Technologies, Inc. <info@garden.io>
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -11,7 +11,7 @@
 
 import { execa } from "execa"
 import semver from "semver"
-import inquirer from "inquirer"
+import { confirm } from "@inquirer/prompts"
 import chalk from "chalk"
 import { dirname, relative, resolve } from "node:path"
 import fsExtra from "fs-extra"
@@ -20,7 +20,7 @@ const { createWriteStream, readFile, writeFile } = fsExtra
 import { getPackages } from "./script-utils.js"
 import parseArgs from "minimist"
 import deline from "deline"
-import replace from "replace-in-file"
+import { replaceInFile } from "replace-in-file"
 import { fileURLToPath } from "node:url"
 import { finished } from "node:stream/promises"
 
@@ -222,8 +222,8 @@ async function release() {
     If this is not a pre-release, create a pull request for ${branchName} on Github by visiting:
       https://github.com/garden-io/garden/pull/new/${branchName}\n
 
-    Please refer to our contributing docs for the next steps:
-    https://github.com/garden-io/garden/blob/main/CONTRIBUTING.md
+    Please refer to our release process docs for the next steps:
+    https://github.com/garden-io/garden/blob/main/RELEASE_PROCESS.md
   `)
   }
 }
@@ -256,7 +256,7 @@ async function updateExampleLinks(version: string) {
     from: /github\.com\/garden-io\/garden\/tree\/[^\/]*\/examples/g,
     to: `github.com/garden-io/garden/tree/${version}/examples`,
   }
-  const results = await replace.replaceInFile(options)
+  const results = await replaceInFile(options)
   console.log(
     "Modified files:",
     results
@@ -279,11 +279,7 @@ async function prompt(version: string): Promise<boolean> {
 
     Are you sure you want to continue?
   `
-  const ans = await inquirer.prompt({
-    name: "continue",
-    message,
-  })
-  return ans.continue.startsWith("y")
+  return await confirm({ message })
 }
 
 /**
@@ -327,8 +323,8 @@ async function stripPrereleaseTags(tags: string[], version: string) {
     }
   }
 
-  // We also need to remove the "edge-bonsai" tag
-  await execa("git", ["tag", "-d", "edge-bonsai"])
+  // We also need to remove the "edge-cedar" tag
+  await execa("git", ["tag", "-d", "edge-cedar"])
 }
 
 ;(async () => {

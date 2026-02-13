@@ -16,7 +16,7 @@ import { ConfigurationError, GardenError, RuntimeError } from "../../exceptions.
 import type { SpawnOutput } from "../../util/util.js"
 import { spawn } from "../../util/util.js"
 import type { ContainerBuildOutputs, ContainerModuleConfig, ContainerRegistryConfig } from "./moduleConfig.js"
-import { defaultImageNamespace, defaultTag as _defaultTag } from "./moduleConfig.js"
+import { defaultTag as _defaultTag } from "./moduleConfig.js"
 import type { Writable } from "stream"
 import { flatten, fromPairs, reduce, uniq } from "lodash-es"
 import type { ActionLog, Log } from "../../logger/log-entry.js"
@@ -107,9 +107,12 @@ const helpers = {
       parsedImage = helpers.parseImageId(explicitPublishId)
     } else {
       const explicitImage = action.getSpec("localId")
-      const localImageName = this.getLocalImageName(action.name, explicitImage)
+      // If localId is explicitly set we use that as the image name
+      // Otherwise we use the actions deploymentImageName output, which includes the registry
+      // if that is specificed in the kubernetes provider.
+      const publishImageName = this.getLocalImageName(action.getOutput("deployment-image-name"), explicitImage)
 
-      parsedImage = helpers.parseImageId(localImageName)
+      parsedImage = helpers.parseImageId(publishImageName)
     }
 
     if (!publishTag) {
@@ -267,7 +270,7 @@ const helpers = {
     const name = parsed.tag ? `${parsed.repository}:${parsed.tag}` : parsed.repository
 
     if (parsed.host) {
-      return `${parsed.host}/${parsed.namespace || defaultImageNamespace}/${name}`
+      return `${parsed.host}/${parsed.namespace ? parsed.namespace + "/" : ""}${name}`
     } else if (parsed.namespace) {
       return `${parsed.namespace}/${name}`
     } else {

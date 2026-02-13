@@ -29,6 +29,7 @@ import { DEFAULT_BUILD_TIMEOUT_SEC, GARDEN_CORE_ROOT, GardenApiVersion } from ".
 import type tmp from "tmp-promise"
 import type { ActionKind, BaseActionConfig } from "../../../src/actions/types.js"
 import { GraphError, ParameterError } from "../../../src/exceptions.js"
+import { sortBy } from "lodash-es"
 
 const makeAction = ({
   basePath,
@@ -40,6 +41,7 @@ const makeAction = ({
   basePath: string
   name: string
   kind: ActionKind
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   spec: any
   disabled: boolean
 }): BaseActionConfig => ({
@@ -143,7 +145,7 @@ describe("ConfigGraph (action-based configs)", () => {
       makeTest("test-2"),
       makeTest("test-3"),
     ]
-    garden.setActionConfigs([...validActionConfigs])
+    garden.setPartialActionConfigs([...validActionConfigs])
     configGraph = await garden.getConfigGraph({ log: garden.log, emit: false })
   })
 
@@ -168,7 +170,7 @@ describe("ConfigGraph (action-based configs)", () => {
       it("should omit disabled Build actions", async () => {
         const tmpGarden = await makeGarden(tmpDir, testPlugin)
 
-        tmpGarden.setActionConfigs([makeDisabledBuild("disabled-build")])
+        tmpGarden.setPartialActionConfigs([makeDisabledBuild("disabled-build")])
 
         const graph = await tmpGarden.getConfigGraph({ log: tmpGarden.log, emit: false })
         const buildActions = graph.getBuilds()
@@ -179,7 +181,7 @@ describe("ConfigGraph (action-based configs)", () => {
       it("should optionally include disabled Build actions", async () => {
         const tmpGarden = await makeGarden(tmpDir, testPlugin)
 
-        tmpGarden.setActionConfigs([makeDisabledBuild("disabled-build")])
+        tmpGarden.setPartialActionConfigs([makeDisabledBuild("disabled-build")])
 
         const graph = await tmpGarden.getConfigGraph({ log: tmpGarden.log, emit: false })
         const disabledBuildActions = graph.getBuilds({ includeDisabled: true })
@@ -204,7 +206,7 @@ describe("ConfigGraph (action-based configs)", () => {
       it("should throw if specifically requesting a disabled Build action", async () => {
         const tmpGarden = await makeGarden(tmpDir, testPlugin)
 
-        tmpGarden.setActionConfigs([makeDisabledBuild("disabled-build")])
+        tmpGarden.setPartialActionConfigs([makeDisabledBuild("disabled-build")])
 
         const graph = await tmpGarden.getConfigGraph({ log: tmpGarden.log, emit: false })
 
@@ -230,7 +232,7 @@ describe("ConfigGraph (action-based configs)", () => {
       it("should omit disabled Deploy actions", async () => {
         const tmpGarden = await makeGarden(tmpDir, testPlugin)
 
-        tmpGarden.setActionConfigs([makeDisabledDeploy("disabled-deploy")])
+        tmpGarden.setPartialActionConfigs([makeDisabledDeploy("disabled-deploy")])
 
         const graph = await tmpGarden.getConfigGraph({ log: tmpGarden.log, emit: false })
         const deployActions = graph.getDeploys()
@@ -241,7 +243,7 @@ describe("ConfigGraph (action-based configs)", () => {
       it("should optionally include disabled Deploy actions", async () => {
         const tmpGarden = await makeGarden(tmpDir, testPlugin)
 
-        tmpGarden.setActionConfigs([makeDisabledDeploy("disabled-deploy")])
+        tmpGarden.setPartialActionConfigs([makeDisabledDeploy("disabled-deploy")])
 
         const graph = await tmpGarden.getConfigGraph({ log: tmpGarden.log, emit: false })
         const disabledDeployActions = graph.getDeploys({ includeDisabled: true })
@@ -266,7 +268,7 @@ describe("ConfigGraph (action-based configs)", () => {
       it("should throw if specifically requesting a disabled Deploy action", async () => {
         const tmpGarden = await makeGarden(tmpDir, testPlugin)
 
-        tmpGarden.setActionConfigs([makeDisabledDeploy("disabled-deploy")])
+        tmpGarden.setPartialActionConfigs([makeDisabledDeploy("disabled-deploy")])
 
         const graph = await tmpGarden.getConfigGraph({ log: tmpGarden.log, emit: false })
 
@@ -292,7 +294,7 @@ describe("ConfigGraph (action-based configs)", () => {
       it("should omit disabled Run actions", async () => {
         const tmpGarden = await makeGarden(tmpDir, testPlugin)
 
-        tmpGarden.setActionConfigs([makeDisabledRun("disabled-run")])
+        tmpGarden.setPartialActionConfigs([makeDisabledRun("disabled-run")])
 
         const graph = await tmpGarden.getConfigGraph({ log: tmpGarden.log, emit: false })
         const runActions = graph.getRuns()
@@ -303,7 +305,7 @@ describe("ConfigGraph (action-based configs)", () => {
       it("should optionally include disabled Run actions", async () => {
         const tmpGarden = await makeGarden(tmpDir, testPlugin)
 
-        tmpGarden.setActionConfigs([makeDisabledRun("disabled-run")])
+        tmpGarden.setPartialActionConfigs([makeDisabledRun("disabled-run")])
 
         const graph = await tmpGarden.getConfigGraph({ log: tmpGarden.log, emit: false })
         const disabledRunActions = graph.getRuns({ includeDisabled: true })
@@ -328,7 +330,7 @@ describe("ConfigGraph (action-based configs)", () => {
       it("should throw if specifically requesting a disabled Run action", async () => {
         const tmpGarden = await makeGarden(tmpDir, testPlugin)
 
-        tmpGarden.setActionConfigs([makeDisabledRun("disabled-run")])
+        tmpGarden.setPartialActionConfigs([makeDisabledRun("disabled-run")])
 
         const graph = await tmpGarden.getConfigGraph({ log: tmpGarden.log, emit: false })
 
@@ -354,7 +356,7 @@ describe("ConfigGraph (action-based configs)", () => {
       it("should omit disabled Test actions", async () => {
         const tmpGarden = await makeGarden(tmpDir, testPlugin)
 
-        tmpGarden.setActionConfigs([makeDisabledTest("disabled-test")])
+        tmpGarden.setPartialActionConfigs([makeDisabledTest("disabled-test")])
 
         const graph = await tmpGarden.getConfigGraph({ log: tmpGarden.log, emit: false })
         const testActions = graph.getTests()
@@ -365,7 +367,7 @@ describe("ConfigGraph (action-based configs)", () => {
       it("should optionally include disabled Test actions", async () => {
         const tmpGarden = await makeGarden(tmpDir, testPlugin)
 
-        tmpGarden.setActionConfigs([makeDisabledTest("disabled-test")])
+        tmpGarden.setPartialActionConfigs([makeDisabledTest("disabled-test")])
 
         const graph = await tmpGarden.getConfigGraph({ log: tmpGarden.log, emit: false })
         const disabledTestActions = graph.getTests({ includeDisabled: true })
@@ -390,7 +392,7 @@ describe("ConfigGraph (action-based configs)", () => {
       it("should throw if specifically requesting a disabled Test action", async () => {
         const tmpGarden = await makeGarden(tmpDir, testPlugin)
 
-        tmpGarden.setActionConfigs([makeDisabledTest("disabled-test")])
+        tmpGarden.setPartialActionConfigs([makeDisabledTest("disabled-test")])
 
         const graph = await tmpGarden.getConfigGraph({ log: tmpGarden.log, emit: false })
 
@@ -648,7 +650,7 @@ describe("ConfigGraph (module-based configs)", () => {
     it("should throw if a build dependency is missing", async () => {
       const garden = await makeTestGardenA()
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         makeTestModule({
           name: "test",
           path: tmpPath,
@@ -664,7 +666,7 @@ describe("ConfigGraph (module-based configs)", () => {
     it("should throw if a runtime dependency is missing", async () => {
       const garden = await makeTestGardenA()
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         makeTestModule({
           name: "test",
           path: tmpPath,
@@ -704,7 +706,7 @@ describe("ConfigGraph (module-based configs)", () => {
     it("should omit disabled deploys", async () => {
       const garden = await makeTestGardenA()
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           allowPublish: false,
@@ -739,7 +741,7 @@ describe("ConfigGraph (module-based configs)", () => {
     it("should optionally include disabled deploys", async () => {
       const garden = await makeTestGardenA()
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           allowPublish: false,
@@ -774,7 +776,7 @@ describe("ConfigGraph (module-based configs)", () => {
     it("should throw if specifically requesting a disabled deploy", async () => {
       const garden = await makeTestGardenA()
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           allowPublish: false,
@@ -858,7 +860,7 @@ describe("ConfigGraph (module-based configs)", () => {
     it("should omit disabled runs", async () => {
       const garden = await makeTestGardenA()
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           allowPublish: false,
@@ -892,7 +894,7 @@ describe("ConfigGraph (module-based configs)", () => {
     it("should optionally include disabled runs", async () => {
       const garden = await makeTestGardenA()
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           allowPublish: false,
@@ -926,7 +928,7 @@ describe("ConfigGraph (module-based configs)", () => {
     it("should throw if specifically requesting a disabled run", async () => {
       const garden = await makeTestGardenA()
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           allowPublish: false,
@@ -1002,7 +1004,7 @@ describe("ConfigGraph (module-based configs)", () => {
       // FIXME: find a proper way of refreshing module configs programmatically.
       //  With the configs below, function convertModules(...) from convert-modules.ts loses the build actions info
       //  when its' called from Garden.getConfigGraph(...)
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           kind: "Module",
@@ -1050,7 +1052,7 @@ describe("ConfigGraph (module-based configs)", () => {
     it("should ignore dependencies by deploys on disabled deploys", async () => {
       const garden = await makeTestGardenA()
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           allowPublish: false,
@@ -1094,7 +1096,7 @@ describe("ConfigGraph (module-based configs)", () => {
     it("should ignore dependencies by deploys on disabled runs", async () => {
       const garden = await makeTestGardenA()
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           allowPublish: false,
@@ -1141,7 +1143,7 @@ describe("ConfigGraph (module-based configs)", () => {
     it("should ignore dependencies by deploys on deploys in disabled modules", async () => {
       const garden = await makeTestGardenA()
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           allowPublish: false,
@@ -1203,7 +1205,7 @@ describe("ConfigGraph (module-based configs)", () => {
     it("should ignore dependencies by runs on disabled deploys", async () => {
       const garden = await makeTestGardenA()
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           allowPublish: false,
@@ -1250,7 +1252,7 @@ describe("ConfigGraph (module-based configs)", () => {
     it("should ignore dependencies by tests on disabled deploys", async () => {
       const garden = await makeTestGardenA()
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           allowPublish: false,
@@ -1299,7 +1301,7 @@ describe("ConfigGraph (module-based configs)", () => {
     it("should include disabled modules in build dependencies", async () => {
       const garden = await makeTestGardenA()
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           allowPublish: false,
@@ -1341,7 +1343,7 @@ describe("ConfigGraph (module-based configs)", () => {
     it("should not traverse past disabled deploys", async () => {
       const garden = await makeTestGardenA()
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           allowPublish: false,
@@ -1400,7 +1402,7 @@ describe("ConfigGraph (module-based configs)", () => {
     it("should return deploys and runs for a build dependant of the given module", async () => {
       const garden = await makeTestGardenA()
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           allowPublish: false,
@@ -1476,90 +1478,112 @@ describe("ConfigGraph (module-based configs)", () => {
   describe("render", () => {
     it("should render config graph nodes with test names", () => {
       const rendered = graphA.render()
-      expect(rendered.nodes).to.include.deep.members([
+      const sortedNodes = sortBy(rendered.nodes, "key")
+      expect(sortedNodes).to.include.deep.members([
         {
           kind: "Build",
           name: "module-a",
           key: "module-a",
           disabled: false,
-        },
-        {
-          kind: "Build",
-          name: "module-b",
-          key: "module-b",
-          disabled: false,
-        },
-        {
-          kind: "Build",
-          name: "module-c",
-          key: "module-c",
-          disabled: false,
-        },
-        {
-          kind: "Test",
-          name: "module-c-unit",
-          key: "module-c-unit",
-          disabled: false,
-        },
-        {
-          kind: "Test",
-          name: "module-c-integ",
-          key: "module-c-integ",
-          disabled: false,
-        },
-        {
-          kind: "Run",
-          name: "task-c",
-          key: "task-c",
-          disabled: false,
-        },
-        {
-          kind: "Deploy",
-          name: "service-c",
-          key: "service-c",
-          disabled: false,
-        },
-        {
-          kind: "Test",
-          name: "module-a-unit",
-          key: "module-a-unit",
-          disabled: false,
+          type: "test",
         },
         {
           kind: "Test",
           name: "module-a-integration",
           key: "module-a-integration",
           disabled: false,
+          type: "test",
         },
         {
-          kind: "Run",
-          name: "task-a",
-          key: "task-a",
+          kind: "Test",
+          name: "module-a-unit",
+          key: "module-a-unit",
           disabled: false,
+          type: "test",
+        },
+        {
+          kind: "Build",
+          name: "module-b",
+          key: "module-b",
+          disabled: false,
+          type: "test",
         },
         {
           kind: "Test",
           name: "module-b-unit",
           key: "module-b-unit",
           disabled: false,
+          type: "test",
         },
         {
-          kind: "Run",
-          name: "task-b",
-          key: "task-b",
+          kind: "Build",
+          name: "module-c",
+          key: "module-c",
           disabled: false,
+          type: "test",
+        },
+        {
+          kind: "Test",
+          name: "module-c-integ",
+          key: "module-c-integ",
+          disabled: false,
+          type: "test",
+        },
+        {
+          kind: "Test",
+          name: "module-c-unit",
+          key: "module-c-unit",
+          disabled: false,
+          type: "test",
         },
         {
           kind: "Deploy",
           name: "service-a",
           key: "service-a",
           disabled: false,
+          type: "test",
         },
         {
           kind: "Deploy",
           name: "service-b",
           key: "service-b",
           disabled: false,
+          type: "test",
+        },
+        {
+          kind: "Deploy",
+          name: "service-c",
+          key: "service-c",
+          disabled: false,
+          type: "test",
+        },
+        {
+          kind: "Run",
+          name: "task-a",
+          key: "task-a",
+          disabled: false,
+          type: "test",
+        },
+        {
+          name: "task-a2",
+          kind: "Run",
+          key: "task-a2",
+          disabled: false,
+          type: "test",
+        },
+        {
+          kind: "Run",
+          name: "task-b",
+          key: "task-b",
+          disabled: false,
+          type: "test",
+        },
+        {
+          kind: "Run",
+          name: "task-c",
+          key: "task-c",
+          disabled: false,
+          type: "test",
         },
       ])
     })
@@ -1569,57 +1593,62 @@ describe("ConfigGraph (module-based configs)", () => {
 describe("ConfigGraphNode", () => {
   describe("render", () => {
     it("should render a build node", () => {
-      const node = new ConfigGraphNode("Build", "module-a", false)
+      const node = new ConfigGraphNode("Build", "container", "module-a", false)
       const res = node.render()
       expect(res).to.eql({
         kind: "Build",
         name: "module-a",
         key: "module-a",
         disabled: false,
+        type: "container",
       })
     })
 
     it("should render a deploy node", () => {
-      const node = new ConfigGraphNode("Deploy", "service-a", false)
+      const node = new ConfigGraphNode("Deploy", "container", "service-a", false)
       const res = node.render()
       expect(res).to.eql({
         kind: "Deploy",
         name: "service-a",
         key: "service-a",
         disabled: false,
+        type: "container",
       })
     })
 
     it("should render a run node", () => {
-      const node = new ConfigGraphNode("Run", "task-a", false)
+      const node = new ConfigGraphNode("Run", "container", "task-a", false)
       const res = node.render()
       expect(res).to.eql({
         kind: "Run",
         name: "task-a",
         key: "task-a",
         disabled: false,
+        type: "container",
       })
     })
 
     it("should render a test node", () => {
-      const node = new ConfigGraphNode("Test", "module-a.test-a", false)
+      const node = new ConfigGraphNode("Test", "container", "module-a.test-a", false)
       const res = node.render()
       expect(res).to.eql({
         kind: "Test",
         name: "module-a.test-a",
         key: "module-a.test-a",
         disabled: false,
+        type: "container",
       })
     })
 
     it("should indicate if the node is disabled", () => {
-      const node = new ConfigGraphNode("Test", "module-a.test-a", true)
+      const node = new ConfigGraphNode("Test", "container", "module-a.test-a", true)
       const res = node.render()
       expect(res).to.eql({
         kind: "Test",
         name: "module-a.test-a",
         key: "module-a.test-a",
         disabled: true,
+        type: "container",
       })
     })
   })

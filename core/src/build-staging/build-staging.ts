@@ -7,8 +7,6 @@
  */
 
 import { isAbsolute, join, resolve, relative, parse, basename } from "path"
-import fsExtra from "fs-extra"
-const { emptyDir, ensureDir, mkdirp, pathExists, remove } = fsExtra
 import { ConfigurationError, InternalError, isErrnoException } from "../exceptions.js"
 import { normalizeRelativePath, joinWithPosix } from "../util/fs.js"
 import type { Log } from "../logger/log-entry.js"
@@ -21,6 +19,9 @@ import { difference } from "lodash-es"
 import { unlink } from "fs"
 import type { BuildAction, BuildActionConfig } from "../actions/build.js"
 import type { ModuleConfig } from "../config/module.js"
+import fsExtra from "fs-extra"
+
+const { emptyDir, ensureDir, mkdirp, pathExists, remove } = fsExtra
 
 const fileSyncConcurrencyLimit = 100
 
@@ -271,6 +272,8 @@ export class BuildStaging {
       const to = targetShouldBeDirectory || targetStat?.isDirectory() ? join(targetPath, sourceBasename) : targetPath
 
       await syncFileAsync({
+        log,
+        sourceRoot,
         from: sourceRoot,
         to,
         allowDelete: withDelete,
@@ -323,7 +326,7 @@ export class BuildStaging {
               ([fromRelative, toRelative], fileCb) => {
                 const from = joinWithPosix(sourceRoot, fromRelative)
                 const to = joinWithPosix(targetPath, toRelative)
-                cloneFile({ from, to, allowDelete: withDelete, statsHelper }, fileCb)
+                cloneFile({ log, sourceRoot, from, to, allowDelete: withDelete, statsHelper }, fileCb)
               },
               cb
             )

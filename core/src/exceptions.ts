@@ -16,7 +16,6 @@ import indentString from "indent-string"
 import { constants } from "os"
 import dns from "node:dns"
 import { styles } from "./logger/styles.js"
-import type { ObjectPath } from "./config/base.js"
 import type { ExecaError } from "execa"
 
 // Unfortunately, NodeJS does not provide a list of all error codes, so we have to maintain this list manually.
@@ -80,6 +79,15 @@ export function isExecaError(err: any): err is ExecaError {
   return err.exitCode !== undefined && err.exitCode !== null
 }
 
+export function isErrorWithMessage(error: unknown): error is { message: string } {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof (error as { message: unknown }).message === "string"
+  )
+}
+
 export type StackTraceMetadata = {
   functionName: string
   relativeFileName?: string
@@ -124,7 +132,7 @@ export abstract class GardenError extends Error {
   /**
    * Necessary to make testFlags.expandErrors work.
    */
-  private unexpandedStack: string | undefined
+  protected unexpandedStack: string | undefined
 
   constructor({ message, wrappedErrors, taskType, code }: GardenErrorParams) {
     super(message.trim())
@@ -248,10 +256,6 @@ export class ParameterError extends GardenError {
   type = "parameter"
 }
 
-export class NotImplementedError extends GardenError {
-  type = "not-implemented"
-}
-
 export class DeploymentError extends GardenError {
   type = "deployment"
 }
@@ -303,17 +307,6 @@ export class CloudApiError extends GardenError {
   constructor(params: GardenErrorParams & { responseStatusCode?: number }) {
     super(params)
     this.responseStatusCode = params.responseStatusCode
-  }
-}
-
-export class TemplateStringError extends GardenError {
-  type = "template-string"
-
-  path?: ObjectPath
-
-  constructor(params: GardenErrorParams & { path?: ObjectPath }) {
-    super(params)
-    this.path = params.path
   }
 }
 
@@ -386,6 +379,10 @@ export class InternalError extends GardenError {
   // we want it to be obvious in amplitude data that this is not a normal error condition
   type = "crash"
 
+  public overrideStack(newStack: string | undefined) {
+    this.stack = this.unexpandedStack = newStack
+  }
+
   // not using object destructuring here on purpose, because errors are of type any and then the error might be passed as the params object accidentally.
   static wrapError(error: Error | string | any, prefix?: string): InternalError {
     let message: string | undefined
@@ -393,11 +390,11 @@ export class InternalError extends GardenError {
     let code: NodeJSErrnoException["code"] | undefined
 
     if (isErrnoException(error)) {
-      message = error.message
+      message = error.toString()
       stack = error.stack
       code = error.code
     } else if (error instanceof Error) {
-      message = error.message
+      message = error.toString()
       stack = error.stack
     } else if (isString(error)) {
       message = error
@@ -409,7 +406,7 @@ export class InternalError extends GardenError {
     message = message ? stripAnsi(message) : ""
 
     const err = new InternalError({ message: prefix ? `${stripAnsi(prefix)}: ${message}` : message, code })
-    err.stack = stack
+    err.overrideStack(stack)
 
     return err
   }
@@ -431,6 +428,8 @@ export class InternalError extends GardenError {
     return styles.error(`${styles.bold(header)}\n\n${body}\n\n${styles.primary(bugReportInformation)}`)
   }
 }
+
+export class NotImplementedError extends InternalError {}
 
 export function toGardenError(err: Error | GardenError | string | any): GardenError {
   if (err instanceof GardenError) {

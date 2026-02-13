@@ -20,7 +20,7 @@ import { createActionLog } from "../../logger/log-entry.js"
 import type { DeployAction } from "../../actions/deploy.js"
 import type { ConfigGraph } from "../../graph/config-graph.js"
 import type { Garden } from "../../index.js"
-import { styles } from "../../logger/styles.js"
+import { reportDeprecatedSyncCommandUsage } from "../../util/deprecations.js"
 
 const syncStartArgs = {
   names: new StringsParameter({
@@ -49,7 +49,7 @@ const syncStartOpts = {
 type Opts = typeof syncStartOpts
 
 export class SyncStartCommand extends Command<Args, Opts> {
-  name = "start"
+  name = "start" as const
   help = "Start any configured syncs to the given Deploy action(s)."
 
   override protected = true
@@ -93,25 +93,27 @@ export class SyncStartCommand extends Command<Args, Opts> {
     return !!opts.monitor
   }
 
-  async action(params: CommandParams<Args, Opts>): Promise<CommandResult<{}>> {
-    const { garden, log, args, opts } = params
-
-    if (!params.parentCommand) {
-      log.warn(
-        dedent`Behaviour of ${styles.command(
-          "sync start"
-        )} is now deprecated and will be changed in a future breaking change release.
-        Instead we recommend running ${styles.command("garden deploy --sync")} or starting syncs ${styles.italic(
-          "inside"
-        )} the dev console with either ${styles.command("deploy --sync")} or ${styles.command("sync start")}.`
-      )
+  async action({
+    garden,
+    log,
+    args,
+    opts,
+    commandLine,
+    parentCommand,
+  }: CommandParams<Args, Opts>): Promise<CommandResult<{}>> {
+    if (!parentCommand) {
+      reportDeprecatedSyncCommandUsage({
+        log,
+        deprecation: "syncStartCommand",
+        syncCommandName: this.name,
+      })
     }
 
     // We default to starting syncs for all Deploy actions
     const names = args.names || ["*"]
 
     // We want to stop any started syncs on exit if we're calling `sync start` from inside the `dev` command.
-    const stopOnExit = !!params.commandLine
+    const stopOnExit = !!commandLine
 
     const graph = await garden.getConfigGraph({
       log,
@@ -171,7 +173,7 @@ export class SyncStartCommand extends Command<Args, Opts> {
         }
         return task
       })
-      await garden.processTasks({ tasks, log })
+      await garden.processTasks({ tasks })
       log.success({ msg: "\nDone!", showDuration: false })
       return {}
     } else {
@@ -224,7 +226,7 @@ export async function startSyncWithoutDeploy({
     })
   })
 
-  const statusResult = await garden.processTasks({ log, tasks, statusOnly: true })
+  const statusResult = await garden.processTasks({ tasks, statusOnly: true })
   let someSyncStarted = false
 
   const router = await garden.getActionRouter()

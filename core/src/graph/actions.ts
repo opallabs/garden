@@ -6,8 +6,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-import cloneDeep from "fast-copy"
-import { isEqual, mapValues, memoize, omit, pick, uniq } from "lodash-es"
+import { isEqual, isString, mapValues, omit } from "lodash-es"
 import type {
   Action,
   ActionConfig,
@@ -22,53 +21,99 @@ import type {
   Executed,
   Resolved,
 } from "../actions/types.js"
-import { ALL_ACTION_MODES_SUPPORTED, actionKinds } from "../actions/types.js"
+import { actionKinds, ALL_ACTION_MODES_SUPPORTED } from "../actions/types.js"
 import {
+  actionIsDisabled,
   actionReferenceToString,
   addActionDependency,
-  baseRuntimeActionConfigSchema,
   describeActionConfig,
   describeActionConfigWithPath,
 } from "../actions/base.js"
 import { BuildAction, buildActionConfigSchema, isBuildActionConfig } from "../actions/build.js"
 import { DeployAction, deployActionConfigSchema, isDeployActionConfig } from "../actions/deploy.js"
-import { RunAction, runActionConfigSchema, isRunActionConfig } from "../actions/run.js"
-import { TestAction, testActionConfigSchema, isTestActionConfig } from "../actions/test.js"
-import { getEffectiveConfigFileLocation, noTemplateFields } from "../config/base.js"
-import type { ActionReference, JoiDescription } from "../config/common.js"
+import { isRunActionConfig, RunAction, runActionConfigSchema } from "../actions/run.js"
+import { isTestActionConfig, TestAction, testActionConfigSchema } from "../actions/test.js"
+import { noTemplateFields } from "../config/base.js"
+import type { ActionReference } from "../config/common.js"
 import { describeSchema, parseActionReference } from "../config/common.js"
 import type { GroupConfig } from "../config/group.js"
 import { ActionConfigContext } from "../config/template-contexts/actions.js"
-import { validateWithPath } from "../config/validation.js"
-import { ConfigurationError, PluginError, InternalError, ValidationError, GardenError } from "../exceptions.js"
-import { overrideVariables, type Garden } from "../garden.js"
+import { ConfigurationError, GardenError, InternalError, PluginError } from "../exceptions.js"
+import { type Garden } from "../garden.js"
 import type { Log } from "../logger/log-entry.js"
 import type { ActionTypeDefinition } from "../plugin/action-types.js"
 import type { ActionDefinitionMap } from "../plugins.js"
 import { getActionTypeBases } from "../plugins.js"
 import type { ActionRouter } from "../router/router.js"
 import { ResolveActionTask } from "../tasks/resolve-action.js"
-import {
-  getActionTemplateReferences,
-  maybeTemplateString,
-  resolveTemplateString,
-  resolveTemplateStrings,
-} from "../template-string/template-string.js"
 import { dedent, deline, naturalList } from "../util/string.js"
-import { getVarfileData, DependencyGraph, mergeVariables } from "./common.js"
+import { DependencyGraph } from "./common.js"
 import type { ConfigGraph } from "./config-graph.js"
 import { MutableConfigGraph } from "./config-graph.js"
 import type { ModuleGraph } from "./modules.js"
 import { isTruthy, type MaybeUndefined } from "../util/util.js"
 import { minimatch } from "minimatch"
-import type { ConfigContext } from "../config/template-contexts/base.js"
+import type { ContextWithSchema } from "../config/template-contexts/base.js"
 import type { LinkedSource, LinkedSourceMap } from "../config-store/local.js"
 import { relative } from "path"
 import { profileAsync } from "../util/profiling.js"
 import { uuidv4 } from "../util/random.js"
 import { getSourcePath } from "../vcs/vcs.js"
-import { actionIsDisabled } from "../actions/base.js"
 import { styles } from "../logger/styles.js"
+import { isUnresolvableValue } from "../template/analysis.js"
+import { getActionTemplateReferences } from "../config/references.js"
+import { deepEvaluate } from "../template/evaluate.js"
+import { validateWithPath } from "../config/validation.js"
+import { VariablesContext } from "../config/template-contexts/variables.js"
+import { isPlainObject } from "../util/objects.js"
+import { getGlobalProjectApiVersion } from "../project-api-version.js"
+import { GardenApiVersion } from "../constants.js"
+
+function* sliceToBatches<T>(dict: Record<string, T>, batchSize: number) {
+  const entries = Object.entries(dict)
+
+  let position = 0
+
+  while (position < entries.length) {
+    yield entries.slice(position, position + batchSize)
+    position += batchSize
+  }
+}
+
+const actionConfigProcBatchSize = 100
+
+function addActionConfig({
+  garden,
+  log,
+  config,
+  collector,
+}: {
+  garden: Garden
+  log: Log
+  config: ActionConfig
+  collector: ActionConfigsByKey
+}) {
+  if (!actionKinds.includes(config.kind)) {
+    throw new ConfigurationError({ message: `Unknown action kind: ${config.kind}` })
+  }
+
+  const key = actionReferenceToString(config)
+  const existing = collector[key]
+
+  if (existing) {
+    if (actionIsDisabled(config, garden.environmentName)) {
+      log.silly(() => `Skipping disabled action ${key} in favor of other action with same key`)
+      return
+    } else if (actionIsDisabled(existing, garden.environmentName)) {
+      log.silly(() => `Skipping disabled action ${key} in favor of other action with same key`)
+      collector[key] = config
+      return
+    } else {
+      throw actionNameConflictError(existing, config, garden.projectRoot)
+    }
+  }
+  collector[key] = config
+}
 
 export const actionConfigsToGraph = profileAsync(async function actionConfigsToGraph({
   garden,
@@ -89,32 +134,13 @@ export const actionConfigsToGraph = profileAsync(async function actionConfigsToG
   linkedSources: LinkedSourceMap
   actionsFilter?: string[]
 }): Promise<MutableConfigGraph> {
+  log.debug(`Building graph from ${configs.length} action configs and ${groupConfigs.length} group configs`)
+
   const configsByKey: ActionConfigsByKey = {}
 
-  function addConfig(config: ActionConfig) {
-    if (!actionKinds.includes(config.kind)) {
-      throw new ConfigurationError({ message: `Unknown action kind: ${config.kind}` })
-    }
-
-    const key = actionReferenceToString(config)
-    const existing = configsByKey[key]
-
-    if (existing) {
-      if (actionIsDisabled(config, garden.environmentName)) {
-        log.silly(() => `Skipping disabled action ${key} in favor of other action with same key`)
-        return
-      } else if (actionIsDisabled(existing, garden.environmentName)) {
-        log.silly(() => `Skipping disabled action ${key} in favor of other action with same key`)
-        configsByKey[key] = config
-        return
-      } else {
-        throw actionNameConflictError(existing, config, garden.projectRoot)
-      }
-    }
-    configsByKey[key] = config
+  for (const config of configs) {
+    addActionConfig({ garden, log, config, collector: configsByKey })
   }
-
-  configs.forEach(addConfig)
 
   for (const group of groupConfigs) {
     for (const config of group.actions) {
@@ -124,9 +150,11 @@ export const actionConfigsToGraph = profileAsync(async function actionConfigsToG
         config.internal.configFilePath = group.internal.configFilePath
       }
 
-      addConfig(config)
+      addActionConfig({ garden, log, config, collector: configsByKey })
     }
   }
+
+  log.debug(`Retained ${Object.keys(configsByKey).length} configs`)
 
   const router = await garden.getActionRouter()
 
@@ -137,32 +165,37 @@ export const actionConfigsToGraph = profileAsync(async function actionConfigsToG
   //
   // Doing this in two steps makes the code a bit less readable, but it's worth it for the performance boost.
   const preprocessResults: { [key: string]: PreprocessActionResult } = {}
-  const computedActionModes: { [key: string]: { mode: ActionMode; explicitMode: boolean } } = {}
+  const computedActionModes: { [key: string]: ComputedActionMode } = {}
 
   const preprocessActions = async (predicate: (config: ActionConfig) => boolean = () => true) => {
-    return await Promise.all(
-      Object.entries(configsByKey).map(async ([key, config]) => {
-        if (!predicate(config)) {
-          return
-        }
+    let batchNo = 1
+    for (const batch of sliceToBatches(configsByKey, actionConfigProcBatchSize)) {
+      log.silly(`Preprocessing actions batch #${batchNo} (${batch.length} items)`)
+      await Promise.all(
+        batch.map(async ([key, config]) => {
+          if (!predicate(config)) {
+            return
+          }
 
-        const { mode, explicitMode } = getActionMode(config, actionModes, log)
-        computedActionModes[key] = { mode, explicitMode }
-        const actionTypes = await garden.getActionTypes()
-        const definition = actionTypes[config.kind][config.type]?.spec
-        preprocessResults[key] = await preprocessActionConfig({
-          garden,
-          config,
-          configsByKey,
-          actionTypes,
-          definition,
-          router,
-          linkedSources,
-          log,
-          mode,
+          const { mode, explicitMode } = getActionMode(config, actionModes, log)
+          computedActionModes[key] = { mode, explicitMode }
+          const actionTypes = await garden.getActionTypes()
+          const definition = actionTypes[config.kind][config.type]?.spec
+          preprocessResults[key] = await preprocessActionConfig({
+            garden,
+            config,
+            configsByKey,
+            actionTypes,
+            definition,
+            router,
+            linkedSources,
+            log,
+            mode,
+          })
         })
-      })
-    )
+      )
+      batchNo++
+    }
   }
 
   // First preprocess only the Deploy actions, so we can infer the mode of Build actions that are used by them.
@@ -200,6 +233,7 @@ export const actionConfigsToGraph = profileAsync(async function actionConfigsToG
 
   // Apply actionsFilter if provided to avoid unnecessary VCS scanning and resolution
   if (actionsFilter) {
+    log.debug(`Applying action filter...`)
     const depGraph = new DependencyGraph<string>()
 
     for (const [key, res] of Object.entries(preprocessResults)) {
@@ -237,12 +271,18 @@ export const actionConfigsToGraph = profileAsync(async function actionConfigsToG
     }
   }
 
-  // Optimize file scanning by avoiding unnecessarily broad scans when project is not in repo root.
   const preprocessedConfigs = Object.values(preprocessResults).map((r) => r.config)
-  const allPaths = preprocessedConfigs.map((c) => getSourcePath(c))
+  log.debug(`Got ${preprocessedConfigs.length} action configs ${!!actionsFilter ? "with" : "without"} action filter`)
+
+  // Optimize file scanning by avoiding unnecessarily broad scans when project is not in repo root.
+  const allPaths = new Set<string>()
+  for (const preprocessedConfig of preprocessedConfigs) {
+    const sourcePath = getSourcePath(preprocessedConfig)
+    allPaths.add(sourcePath)
+  }
+  log.debug(`Finding minimal roots for ${allPaths.size} paths`)
   const minimalRoots = await garden.vcs.getMinimalRoots(log, allPaths)
 
-  // TODO: Maybe we could optimize resolving tree versions, avoid parallel scanning of the same directory etc.
   const graph = new MutableConfigGraph({
     environmentName: garden.environmentName,
     actions: [],
@@ -250,49 +290,54 @@ export const actionConfigsToGraph = profileAsync(async function actionConfigsToG
     groups: groupConfigs,
   })
 
-  await Promise.all(
-    Object.entries(preprocessResults).map(async ([key, res]) => {
-      const { config, linkedSource, remoteSourcePath, supportedModes, dependencies } = res
-      const { mode, explicitMode } = computedActionModes[key]
+  let batchNo = 1
+  for (const batch of sliceToBatches(preprocessResults, actionConfigProcBatchSize)) {
+    log.silly(`Processing actions batch #${batchNo} (${batch.length} items)`)
+    await Promise.all(
+      batch.map(async ([key, res]) => {
+        const { config, linkedSource, remoteSourcePath, supportedModes, dependencies } = res
+        const { mode, explicitMode } = computedActionModes[key]
 
-      try {
-        const action = await processActionConfig({
-          garden,
-          graph,
-          config,
-          dependencies,
-          log,
-          mode,
-          linkedSource,
-          remoteSourcePath,
-          supportedModes,
-          scanRoot: minimalRoots[getSourcePath(config)],
-        })
+        try {
+          const action = await processActionConfig({
+            garden,
+            graph,
+            config,
+            dependencies,
+            log,
+            mode,
+            linkedSource,
+            remoteSourcePath,
+            supportedModes,
+            scanRoot: minimalRoots[getSourcePath(config)],
+          })
 
-        if (!action.supportsMode(mode)) {
-          if (explicitMode) {
-            log.warn(`${action.longDescription()} is not configured for or does not support ${mode} mode`)
+          if (!action.supportsMode(mode)) {
+            if (explicitMode) {
+              log.warn(`${action.longDescription()} is not configured for or does not support ${mode} mode`)
+            }
           }
-        }
 
-        graph.addAction(action)
-      } catch (error) {
-        if (!(error instanceof GardenError)) {
-          throw error
-        }
+          graph.addAction(action)
+        } catch (error) {
+          if (!(error instanceof GardenError)) {
+            throw error
+          }
 
-        throw new ConfigurationError({
-          message:
-            styles.error(
-              `\nError processing config for ${styles.highlight(config.kind)} action ${styles.highlight(
-                config.name
-              )}:\n`
-            ) + styles.error(error.message),
-          wrappedErrors: [error],
-        })
-      }
-    })
-  )
+          throw new ConfigurationError({
+            message:
+              styles.error(
+                `\nError processing config for ${styles.highlight(config.kind)} action ${styles.highlight(
+                  config.name
+                )}:\n`
+              ) + styles.error(error.message),
+            wrappedErrors: [error],
+          })
+        }
+      })
+    )
+    batchNo++
+  }
 
   graph.validate()
 
@@ -384,7 +429,7 @@ export const actionFromConfig = profileAsync(async function actionFromConfig({
   })
 })
 
-async function processActionConfig({
+export const processActionConfig = profileAsync(async function processActionConfig({
   garden,
   graph,
   config,
@@ -414,7 +459,7 @@ async function processActionConfig({
 
   const configPath = relative(garden.projectRoot, config.internal.configFilePath || config.internal.basePath)
 
-  if (!actionTypes[kind][type]) {
+  if (!actionTypes[kind][type] && !actionIsDisabled(config, garden.environmentName)) {
     const availableKinds: ActionKind[] = []
     actionKinds.forEach((actionKind) => {
       if (actionTypes[actionKind][type]) {
@@ -433,11 +478,7 @@ async function processActionConfig({
       })
     }
 
-    let availableForKind: string = (Object.keys(actionTypes[kind]) || {}).map((t) => `'${t}'`).join(", ")
-    if (availableForKind === "") {
-      availableForKind = "None"
-    }
-
+    const availableForKind: string = (Object.keys(actionTypes[kind]) || {}).map((t) => `'${t}'`).join(", ") || "None"
     throw new ConfigurationError({
       message: dedent`
         Unrecognized action type '${type}' (kind '${kind}', defined at ${configPath}). Are you missing a provider configuration?
@@ -462,18 +503,17 @@ async function processActionConfig({
     config.internal.treeVersion ||
     (await garden.vcs.getTreeVersion({ log, projectName: garden.projectName, config, scanRoot }))
 
-  const effectiveConfigFileLocation = getEffectiveConfigFileLocation(config)
-
-  let variables = await mergeVariables({
-    basePath: effectiveConfigFileLocation,
-    variables: config.variables,
-    varfiles: config.varfiles,
+  const variablesContext = new ActionConfigContext({
+    garden,
+    config,
+    thisContextParams: {
+      mode,
+      name: config.name,
+    },
+    variables: garden.variables,
   })
 
-  // override the variables if there's any matching variables in variable overrides
-  // passed via --var cli flag. variables passed via --var cli flag have highest precedence
-  const variableOverrides = garden.variableOverrides || {}
-  variables = overrideVariables(variables ?? {}, variableOverrides)
+  const variables = await VariablesContext.forAction(garden, config, variablesContext)
 
   const params: ActionWrapperParams<any> = {
     baseBuildDirectory: garden.buildStaging.buildDirPath,
@@ -504,7 +544,7 @@ async function processActionConfig({
   } else {
     return config satisfies never
   }
-}
+})
 
 export function actionNameConflictError(configA: ActionConfig, configB: ActionConfig, rootPath: string) {
   return new ConfigurationError({
@@ -543,7 +583,7 @@ export async function resolveAction<T extends Action>({
     force: true,
   })
 
-  const results = await garden.processTasks({ tasks: [task], log, throwOnError: true })
+  const results = await garden.processTasks({ tasks: [task], throwOnError: true })
 
   log.success({ msg: `Done`, showDuration: false })
 
@@ -581,7 +621,7 @@ export async function resolveActions<T extends Action>({
       })
   )
 
-  const results = await garden.processTasks({ tasks, log, throwOnError: true })
+  const results = await garden.processTasks({ tasks, throwOnError: true })
 
   return <ResolvedActions<T>>(<unknown>mapValues(results.results.getMap(), (r) => r!.result!.outputs.resolvedAction))
 }
@@ -611,26 +651,10 @@ export async function executeAction<T extends Action>({
     force: true,
   })
 
-  const results = await garden.processTasks({ tasks: [task], log, throwOnError: true, statusOnly })
+  const results = await garden.processTasks({ tasks: [task], throwOnError: true, statusOnly })
 
   return <Executed<T>>(<unknown>results.results.getResult(task)!.result!.executedAction)
 }
-
-const getBuiltinConfigContextKeys = memoize(() => {
-  const keys: string[] = []
-
-  for (const schema of [buildActionConfigSchema(), baseRuntimeActionConfigSchema()]) {
-    const configKeys = schema.describe().keys
-
-    for (const [k, v] of Object.entries(configKeys)) {
-      if ((<JoiDescription>v).metas?.find((m) => m.templateContext === ActionConfigContext)) {
-        keys.push(k)
-      }
-    }
-  }
-
-  return uniq(keys)
-})
 
 function getActionSchema(kind: ActionKind) {
   switch (kind) {
@@ -655,6 +679,11 @@ interface PreprocessActionResult {
   linkedSource: LinkedSource | null
 }
 
+interface ComputedActionMode {
+  mode: ActionMode
+  explicitMode: boolean
+}
+
 export const preprocessActionConfig = profileAsync(async function preprocessActionConfig({
   garden,
   config,
@@ -677,72 +706,19 @@ export const preprocessActionConfig = profileAsync(async function preprocessActi
   actionTypes: ActionDefinitionMap
 }): Promise<PreprocessActionResult> {
   const description = describeActionConfig(config)
-  const templateName = config.internal.templateName
 
-  // in pre-processing, only use varfiles that are not template strings
-  const resolvedVarFiles = config.varfiles?.filter((f) => !maybeTemplateString(getVarfileData(f).path))
-  const variables = await mergeVariables({
-    basePath: config.internal.basePath,
-    variables: config.variables,
-    varfiles: resolvedVarFiles,
-  })
-  const resolvedVariables = resolveTemplateStrings({
-    value: variables,
-    context: new ActionConfigContext({
-      garden,
-      config: { ...config, internal: { ...config.internal, inputs: {} } },
-      thisContextParams: {
-        mode,
-        name: config.name,
-      },
-      variables,
-    }),
-    contextOpts: { allowPartial: true },
-    // TODO: See about mapping this to the original variable sources
-    source: undefined,
+  // context for resolving variables (with project & environment level vars)
+  const variableContext = new ActionConfigContext({
+    garden,
+    config,
+    thisContextParams: {
+      mode,
+      name: config.name,
+    },
+    variables: garden.variables,
   })
 
-  if (templateName) {
-    // Partially resolve inputs
-    const partiallyResolvedInputs = resolveTemplateStrings({
-      value: config.internal.inputs || {},
-      context: new ActionConfigContext({
-        garden,
-        config: { ...config, internal: { ...config.internal, inputs: {} } },
-        thisContextParams: {
-          mode,
-          name: config.name,
-        },
-        variables: resolvedVariables,
-      }),
-      contextOpts: { allowPartial: true },
-      // TODO: See about mapping this to the original inputs source
-      source: undefined,
-    })
-
-    const template = garden.configTemplates[templateName]
-
-    // Note: This shouldn't happen in normal user flows
-    if (!template) {
-      throw new InternalError({
-        message: `${description} references template '${templateName}' which cannot be found. Available templates: ${
-          naturalList(Object.keys(garden.configTemplates)) || "(none)"
-        }`,
-      })
-    }
-
-    // Validate inputs schema
-    config.internal.inputs = validateWithPath({
-      config: cloneDeep(partiallyResolvedInputs),
-      configType: `inputs for ${description}`,
-      path: config.internal.basePath,
-      schema: template.inputsSchema,
-      projectRoot: garden.projectRoot,
-      source: undefined,
-    })
-  }
-
-  const builtinConfigKeys = getBuiltinConfigContextKeys()
+  // action context (may be missing some varfiles at this point)
   const builtinFieldContext = new ActionConfigContext({
     garden,
     config,
@@ -750,30 +726,27 @@ export const preprocessActionConfig = profileAsync(async function preprocessActi
       mode,
       name: config.name,
     },
-    variables: resolvedVariables,
+    variables: await VariablesContext.forAction(garden, config, variableContext),
   })
 
-  const yamlDoc = config.internal.yamlDoc
-
   function resolveTemplates() {
-    // Fully resolve built-in fields that only support `ActionConfigContext`.
-    // TODO-0.13.1: better error messages when something goes wrong here (missing inputs for example)
-    const resolvedBuiltin = resolveTemplateStrings({
-      value: pick(config, builtinConfigKeys),
+    // Step 1: Resolve everything except for spec, variables. They'll be fully resolved later. Also omit internal.
+    // @ts-expect-error todo: correct types for unresolved configs
+    const resolvedBuiltin = deepEvaluate(omit(config, ["variables", "spec", "internal"]), {
       context: builtinFieldContext,
-      contextOpts: {
-        allowPartial: false,
-      },
-      source: { yamlDoc, basePath: [] },
+      opts: {},
     })
-    config = { ...config, ...resolvedBuiltin }
-    const { spec = {} } = config
 
-    // Validate fully resolved keys (the above + those that don't allow any templating)
-    // TODO-0.13.1: better error messages when something goes wrong here
-    config = validateWithPath({
+    if (!isPlainObject(resolvedBuiltin)) {
+      throw new InternalError({
+        message: "Expected action config to evaluate to a plain object.",
+      })
+    }
+
+    // Step 2: Validate everything except variables and spec
+    const validatedBuiltin = validateWithPath<ActionConfig>({
       config: {
-        ...config,
+        ...resolvedBuiltin,
         variables: {},
         spec: {},
       },
@@ -782,27 +755,30 @@ export const preprocessActionConfig = profileAsync(async function preprocessActi
       name: config.name,
       path: config.internal.basePath,
       projectRoot: garden.projectRoot,
-      source: { yamlDoc },
+      source: { yamlDoc: config.internal.yamlDoc, path: [] },
     })
 
-    config = { ...config, variables: resolvedVariables, spec }
-
-    // Partially resolve other fields
-    // TODO-0.13.1: better error messages when something goes wrong here (missing inputs for example)
-    const resolvedOther = resolveTemplateStrings({
-      value: omit(config, builtinConfigKeys),
-      context: builtinFieldContext,
-      contextOpts: {
-        allowPartial: true,
-      },
-      source: { yamlDoc },
-    })
-    config = { ...config, ...resolvedOther }
+    // Step 3: make sure we don't lose the unresolved spec and variables. They'll be fully resolved later.
+    const { spec = {}, variables = {}, internal } = config
+    config = {
+      ...validatedBuiltin,
+      spec,
+      variables,
+      internal,
+    }
   }
 
   resolveTemplates()
 
-  const configureActionResult = await router.configureAction({ config, log })
+  // hack: because variables are partially resolved & that doesn't play well with joi, we do not provide them to the configure handler.
+  const configureActionResult = await router.configureAction({
+    config: {
+      ...config,
+      variables: {},
+    },
+    log,
+  })
+  configureActionResult.config.variables = config.variables
 
   const { config: updatedConfig } = configureActionResult
 
@@ -851,8 +827,8 @@ export const preprocessActionConfig = profileAsync(async function preprocessActi
     })
   }
 
+  const actionKey = actionReferenceToString(config)
   const repositoryUrl = config.source?.repository?.url
-  const key = actionReferenceToString(config)
 
   let linkedSource: LinkedSource | null = null
   let remoteSourcePath: string | null = null
@@ -861,6 +837,7 @@ export const preprocessActionConfig = profileAsync(async function preprocessActi
       // Carry over clone path from converted module
       remoteSourcePath = config.internal.remoteClonePath
     } else {
+      const key = actionReferenceToString(config)
       remoteSourcePath = await garden.resolveExtSourcePath({
         name: key,
         sourceType: "action",
@@ -871,13 +848,12 @@ export const preprocessActionConfig = profileAsync(async function preprocessActi
       config.internal.basePath = remoteSourcePath
     }
 
-    if (linkedSources[key]) {
-      linkedSource = linkedSources[key]
+    if (linkedSources[actionKey]) {
+      linkedSource = linkedSources[actionKey]
     }
   }
 
   const dependencies = dependenciesFromActionConfig({
-    log,
     config,
     configsByKey,
     definition,
@@ -895,18 +871,16 @@ export const preprocessActionConfig = profileAsync(async function preprocessActi
 })
 
 function dependenciesFromActionConfig({
-  log,
   config,
   configsByKey,
   definition,
   templateContext,
   actionTypes,
 }: {
-  log: Log
   config: ActionConfig
   configsByKey: ActionConfigsByKey
   definition: MaybeUndefined<ActionTypeDefinition<any>>
-  templateContext: ConfigContext
+  templateContext: ContextWithSchema
   actionTypes: ActionDefinitionMap
 }) {
   const description = describeActionConfig(config)
@@ -915,18 +889,30 @@ function dependenciesFromActionConfig({
     config.dependencies = []
   }
 
-  const deps: ActionDependency[] = config.dependencies.map((d) => {
-    try {
+  const deps: ActionDependency[] = config.dependencies
+    .map((d) => {
       const { kind, name } = parseActionReference(d)
-      return { kind, name, explicit: true, needsExecutedOutputs: false, needsStaticOutputs: false }
-    } catch (error) {
-      throw new ValidationError({
-        message: `Invalid dependency specified: ${error}`,
-      })
-    }
-  })
+      const depKey = actionReferenceToString(d)
+      const depConfig = configsByKey[depKey]
 
-  function addDep(ref: ActionReference, attributes: ActionDependencyAttributes) {
+      if (!depConfig) {
+        throw new ConfigurationError({
+          message: `${description} references dependency ${depKey}, but no such action could be found`,
+        })
+      }
+
+      return {
+        kind,
+        name,
+        type: depConfig.type,
+        explicit: true,
+        needsExecutedOutputs: false,
+        needsStaticOutputs: false,
+      }
+    })
+    .filter(isTruthy)
+
+  function addDep(ref: ActionReference & { type: string }, attributes: ActionDependencyAttributes) {
     addActionDependency({ ...ref, ...attributes }, deps)
   }
 
@@ -943,7 +929,12 @@ function dependenciesFromActionConfig({
         })
       }
 
-      addDep(ref, { explicit: true, needsExecutedOutputs: false, needsStaticOutputs: false })
+      const refWithType = {
+        ...ref,
+        type: config.type,
+      }
+
+      addDep(refWithType, { explicit: true, needsExecutedOutputs: false, needsStaticOutputs: false })
     }
   } else if (config.build) {
     // -> build field on runtime actions
@@ -956,54 +947,88 @@ function dependenciesFromActionConfig({
       })
     }
 
-    addDep(ref, { explicit: true, needsExecutedOutputs: false, needsStaticOutputs: false })
+    const refWithType = {
+      ...ref,
+      type: config.type,
+    }
+    addDep(refWithType, { explicit: true, needsExecutedOutputs: false, needsStaticOutputs: false })
   }
 
   // Action template references in spec/variables
-  // -> We avoid depending on action execution when referencing static output keys
+  // - We avoid depending on action execution when referencing static output keys from runtime actions
+  //   (Deploys, Tests and Runs).
+  // - We _do_ depend on action execution when referencing static output keys from Build actions.
   const staticOutputKeys = definition?.staticOutputsSchema ? describeSchema(definition.staticOutputsSchema).keys : []
 
-  for (const ref of getActionTemplateReferences(config)) {
+  for (const ref of getActionTemplateReferences(config, templateContext)) {
     let needsExecuted = false
+    let isExplicit = false
 
-    const outputKey = ref.fullRef[4] as string
+    const outputType = ref.keyPath[0]
 
-    if (maybeTemplateString(ref.name)) {
-      try {
-        ref.name = resolveTemplateString({
-          string: ref.name,
-          context: templateContext,
-          contextOpts: { allowPartial: false },
-        })
-      } catch (err) {
-        log.warn(
-          `Unable to infer dependency from action reference in ${description}, because template string '${ref.name}' could not be resolved. Either fix the dependency or specify it explicitly.`
-        )
-        continue
+    if (isUnresolvableValue(outputType)) {
+      const err = outputType.getError()
+      throw new ConfigurationError({
+        message: `Found invalid action reference: ${err}`,
+      })
+    }
+
+    const outputKey = ref.keyPath[1]
+
+    const refActionKey = actionReferenceToString(ref)
+    const { type: refActionType, kind: refActionKind } = configsByKey[refActionKey] || {}
+
+    if (outputType === "outputs") {
+      let refStaticOutputKeys: string[] = []
+      if (refActionType) {
+        const refActionSpec = actionTypes[ref.kind][refActionType]?.spec
+        refStaticOutputKeys = refActionSpec?.staticOutputsSchema
+          ? describeSchema(refActionSpec.staticOutputsSchema).keys
+          : []
+      }
+
+      const apiVersion = getGlobalProjectApiVersion()
+
+      if (apiVersion === GardenApiVersion.v2) {
+        /*
+        If a referenced dependency is a Build, then we re-mark it as explicit dependency.
+        It will have the same effect as if it was explicitly referenced in the configuration.
+
+        This is safe, because Builds generally don't have side-effects other than producing artifacts,
+        whereas Deploys and Runs often do.
+
+        This improves the user experience for the common use-case of referencing a container image in a runtime
+        resource (like a `helm` Deploy), where the user intent is almost always that the referenced build should exist
+        (i.e. the dependency should be processed) before the runtime resource is processed (i.e. deployed or run).
+
+        Note: We could also always execute Test actions that are referenced, but we'll stick with only Builds for now.
+       */
+        if (refActionKind === "Build") {
+          isExplicit = true
+        }
+      }
+
+      if (!isString(outputKey)) {
+        // If the output key is not resolved yet, we just mark at as needing execution.
+        needsExecuted = true
+      } else {
+        // Otherwise, we avoid execution when referencing the static output keys of the ref's action type.
+        // e.g. a helm deploy referencing container build static output deploymentImageName
+        // ${actions.build.my-container.outputs.deploymentImageName}
+        needsExecuted = !staticOutputKeys.includes(outputKey) && !refStaticOutputKeys.includes(outputKey)
       }
     }
-    // also avoid execution when referencing the static output keys of the ref action type.
-    // e.g. a helm deploy referencing container build static output deploymentImageName
-    // ${actions.build.my-container.outputs.deploymentImageName}
-    const refActionKey = actionReferenceToString(ref)
-    const refActionType = configsByKey[refActionKey]?.type
-    let refStaticOutputKeys: string[] = []
-    if (refActionType) {
-      const refActionSpec = actionTypes[ref.kind][refActionType]?.spec
-      refStaticOutputKeys = refActionSpec?.staticOutputsSchema
-        ? describeSchema(refActionSpec.staticOutputsSchema).keys
-        : []
+
+    const refWithType = {
+      ...ref,
+      type: refActionType,
     }
 
-    if (
-      ref.fullRef[3] === "outputs" &&
-      !staticOutputKeys.includes(outputKey) &&
-      !refStaticOutputKeys.includes(outputKey)
-    ) {
-      needsExecuted = true
-    }
-
-    addDep(ref, { explicit: false, needsExecutedOutputs: needsExecuted, needsStaticOutputs: !needsExecuted })
+    addDep(omit(refWithType, ["keyPath"]), {
+      explicit: isExplicit,
+      needsExecutedOutputs: needsExecuted,
+      needsStaticOutputs: !needsExecuted,
+    })
   }
 
   return deps

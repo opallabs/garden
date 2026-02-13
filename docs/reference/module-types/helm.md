@@ -15,7 +15,7 @@ Specify a Helm chart (either in your repository or remote from a registry) to de
 
 Refer to the [Helm guide](../../k8s-plugins/actions/deploy/helm.md) for usage instructions.
 
-Garden uses Helm 3.15.3.
+Garden uses Helm 3.17.2.
 
 Below is the full schema reference. For an introduction to configuring Garden modules, please look at our [Configuration
 guide](../../using-garden/configuration-overview.md).
@@ -76,9 +76,7 @@ description:
 # based on, for example, the current environment or other variables (e.g. `disabled: ${environment.name == "prod"}`).
 # This can be handy when you only need certain modules for specific environments, e.g. only for development.
 #
-# Disabling a module means that any services, tasks and tests contained in it will not be deployed or run. It also
-# means that the module is not built _unless_ it is declared as a build dependency by another enabled module (in which
-# case building this module is necessary for the dependant to be built).
+# Disabling a module means that any services, tasks and tests contained in it will not be build, deployed or run.
 #
 # If you disable the module, and its services, tasks or tests are referenced as _runtime_ dependencies, Garden will
 # automatically ignore those dependency declarations. Note however that template strings referencing the module's
@@ -92,8 +90,8 @@ disabled: false
 #
 # Note that you can also _exclude_ files using the `exclude` field or by placing `.gardenignore` files in your source
 # tree, which use the same format as `.gitignore` files. See the [Configuration Files
-# guide](https://docs.garden.io/using-garden/configuration-overview#including-excluding-files-and-directories) for
-# details.
+# guide](https://docs.garden.io/bonsai-0.13/using-garden/configuration-overview#including-excluding-files-and-directories)
+# for details.
 #
 # Also note that specifying an empty list here means _no sources_ should be included.
 #
@@ -110,7 +108,8 @@ include:
 #
 # Note that you can also explicitly _include_ files using the `include` field. If you also specify the `include`
 # field, the files/patterns specified here are filtered from the files matched by `include`. See the [Configuration
-# Files guide](https://docs.garden.io/using-garden/configuration-overview#including-excluding-files-and-directories)
+# Files
+# guide](https://docs.garden.io/bonsai-0.13/using-garden/configuration-overview#including-excluding-files-and-directories)
 # for details.
 #
 # Unlike the `scan.exclude` field in the project config, the filters here have _no effect_ on which files and
@@ -219,9 +218,11 @@ values: {}
 # this action config's directory.
 valueFiles: []
 
-# Whether to set the --atomic flag during installs and upgrades. Set to true if you'd like the changes applied to be
-# reverted on failure. Set to false if e.g. you want to see more information about failures and then manually roll
-# back, instead of having Helm do it automatically on failure.
+# Whether to set the `--atomic` flag during installs and upgrades. Set to `true` if you'd like the changes applied
+# to be reverted on failure. Set to false if e.g. you want to see more information about failures and then manually
+# roll back, instead of having Helm do it automatically on failure.
+#
+# Note that setting `atomic` to `true` implies `wait`.
 atomicInstall: false
 
 # The name of another `helm` module to use as a base for this one. Use this to re-use a Helm chart across multiple
@@ -249,7 +250,8 @@ dependencies: []
 #
 # Sync is enabled by setting the `--sync` flag on the `garden deploy` command.
 #
-# See the [Code Synchronization guide](https://docs.garden.io/guides/code-synchronization) for more information.
+# See the [Code Synchronization guide](https://docs.garden.io/bonsai-0.13/guides/code-synchronization) for more
+# information.
 sync:
   # Override the default container arguments when in sync mode.
   args:
@@ -277,7 +279,7 @@ sync:
       exclude:
 
       # The sync mode to use for the given paths. See the [Code Synchronization
-      # guide](https://docs.garden.io/guides/code-synchronization) for details.
+      # guide](https://docs.garden.io/bonsai-0.13/guides/code-synchronization) for details.
       mode: one-way-safe
 
       # The default permission bits, specified as an octal, to set on files at the sync target. Defaults to 0o644
@@ -317,7 +319,8 @@ sync:
 #
 # Health checks are disabled for services running in local mode.
 #
-# See the [Local Mode guide](https://docs.garden.io/guides/running-service-in-local-mode) for more information.
+# See the [Local Mode guide](https://docs.garden.io/bonsai-0.13/guides/running-service-in-local-mode) for more
+# information.
 #
 # Note! This feature is still experimental. Some incompatible changes can be made until the first non-experimental
 # release.
@@ -428,9 +431,9 @@ tasks:
     # Maximum duration (in seconds) of the task's execution.
     timeout: 600
 
-    # Set to false if you don't want the Runs's result to be cached. Use this if the Run needs to be run any time your
-    # project (or one or more of the Run's dependants) is deployed. Otherwise the Run is only re-run when its version
-    # changes, or when you run `garden run`.
+    # Set to false if you don't want the Run action result to be cached. Use this if the Run action needs to be run
+    # any time your project (or one or more of the Run action's dependants) is deployed. Otherwise the Run action is
+    # only re-run when its version changes, or when you run `garden run`.
     cacheResult: true
 
     # The command/entrypoint used to run inside the container.
@@ -782,7 +785,7 @@ A description of the module.
 
 Set this to `true` to disable the module. You can use this with conditional template strings to disable modules based on, for example, the current environment or other variables (e.g. `disabled: ${environment.name == "prod"}`). This can be handy when you only need certain modules for specific environments, e.g. only for development.
 
-Disabling a module means that any services, tasks and tests contained in it will not be deployed or run. It also means that the module is not built _unless_ it is declared as a build dependency by another enabled module (in which case building this module is necessary for the dependant to be built).
+Disabling a module means that any services, tasks and tests contained in it will not be build, deployed or run.
 
 If you disable the module, and its services, tasks or tests are referenced as _runtime_ dependencies, Garden will automatically ignore those dependency declarations. Note however that template strings referencing the module's service or task outputs (i.e. runtime outputs) will fail to resolve when the module is disabled, so you need to make sure to provide alternate values for those if you're using them, using conditional expressions.
 
@@ -794,7 +797,7 @@ If you disable the module, and its services, tasks or tests are referenced as _r
 
 Specify a list of POSIX-style paths or globs that should be regarded as the source files for this module. Files that do *not* match these paths or globs are excluded when computing the version of the module, when responding to filesystem watch events, and when staging builds.
 
-Note that you can also _exclude_ files using the `exclude` field or by placing `.gardenignore` files in your source tree, which use the same format as `.gitignore` files. See the [Configuration Files guide](https://docs.garden.io/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
+Note that you can also _exclude_ files using the `exclude` field or by placing `.gardenignore` files in your source tree, which use the same format as `.gitignore` files. See the [Configuration Files guide](https://docs.garden.io/bonsai-0.13/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
 
 Also note that specifying an empty list here means _no sources_ should be included.
 
@@ -820,7 +823,7 @@ include:
 
 Specify a list of POSIX-style paths or glob patterns that should be excluded from the module. Files that match these paths or globs are excluded when computing the version of the module, when responding to filesystem watch events, and when staging builds.
 
-Note that you can also explicitly _include_ files using the `include` field. If you also specify the `include` field, the files/patterns specified here are filtered from the files matched by `include`. See the [Configuration Files guide](https://docs.garden.io/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
+Note that you can also explicitly _include_ files using the `include` field. If you also specify the `include` field, the files/patterns specified here are filtered from the files matched by `include`. See the [Configuration Files guide](https://docs.garden.io/bonsai-0.13/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
 
 Unlike the `scan.exclude` field in the project config, the filters here have _no effect_ on which files and directories are watched for changes. Use the project `scan.exclude` field to affect those, if you have large directories that should not be watched for changes.
 
@@ -1044,7 +1047,11 @@ this action config's directory.
 
 ### `atomicInstall`
 
-Whether to set the --atomic flag during installs and upgrades. Set to true if you'd like the changes applied to be reverted on failure. Set to false if e.g. you want to see more information about failures and then manually roll back, instead of having Helm do it automatically on failure.
+Whether to set the `--atomic` flag during installs and upgrades. Set to `true` if you'd like the changes applied
+to be reverted on failure. Set to false if e.g. you want to see more information about failures and then manually
+roll back, instead of having Helm do it automatically on failure.
+
+Note that setting `atomic` to `true` implies `wait`.
 
 | Type      | Default | Required |
 | --------- | ------- | -------- |
@@ -1104,7 +1111,7 @@ Note that `serviceResource` must also be specified to enable sync.
 
 Sync is enabled by setting the `--sync` flag on the `garden deploy` command.
 
-See the [Code Synchronization guide](https://docs.garden.io/guides/code-synchronization) for more information.
+See the [Code Synchronization guide](https://docs.garden.io/bonsai-0.13/guides/code-synchronization) for more information.
 
 | Type     | Required |
 | -------- | -------- |
@@ -1208,7 +1215,7 @@ sync:
 
 [sync](#sync) > [paths](#syncpaths) > mode
 
-The sync mode to use for the given paths. See the [Code Synchronization guide](https://docs.garden.io/guides/code-synchronization) for details.
+The sync mode to use for the given paths. See the [Code Synchronization guide](https://docs.garden.io/bonsai-0.13/guides/code-synchronization) for details.
 
 | Type     | Allowed Values                                                                                                                            | Default          | Required |
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ---------------- | -------- |
@@ -1266,6 +1273,10 @@ Optionally specify the name of a specific container to sync to. If not specified
 
 ### `localMode`
 
+{% hint style="warning" %}
+**Deprecated**: The local mode will be removed in the next major version of Garden, 0.14.
+{% endhint %}
+
 [EXPERIMENTAL] Configures the local application which will send and receive network requests instead of the target resource specified by `localMode.target` or `defaultTarget`. One of those fields must be specified to enable local mode for the action.
 
 The selected container of the target Kubernetes resource will be replaced by a proxy container which runs an SSH server to proxy requests.
@@ -1276,7 +1287,7 @@ Local mode always takes the precedence over sync mode if there are any conflicti
 
 Health checks are disabled for services running in local mode.
 
-See the [Local Mode guide](https://docs.garden.io/guides/running-service-in-local-mode) for more information.
+See the [Local Mode guide](https://docs.garden.io/bonsai-0.13/guides/running-service-in-local-mode) for more information.
 
 Note! This feature is still experimental. Some incompatible changes can be made until the first non-experimental release.
 
@@ -1288,6 +1299,10 @@ Note! This feature is still experimental. Some incompatible changes can be made 
 
 [localMode](#localmode) > ports
 
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
+
 The reverse port-forwards configuration for the local application.
 
 | Type            | Required |
@@ -1297,6 +1312,10 @@ The reverse port-forwards configuration for the local application.
 ### `localMode.ports[].local`
 
 [localMode](#localmode) > [ports](#localmodeports) > local
+
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
 
 The local port to be used for reverse port-forward.
 
@@ -1308,6 +1327,10 @@ The local port to be used for reverse port-forward.
 
 [localMode](#localmode) > [ports](#localmodeports) > remote
 
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
+
 The remote port to be used for reverse port-forward.
 
 | Type     | Required |
@@ -1317,6 +1340,10 @@ The remote port to be used for reverse port-forward.
 ### `localMode.command[]`
 
 [localMode](#localmode) > command
+
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
 
 The command to run the local application. If not present, then the local application should be started manually.
 
@@ -1328,6 +1355,10 @@ The command to run the local application. If not present, then the local applica
 
 [localMode](#localmode) > restart
 
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
+
 Specifies restarting policy for the local application. By default, the local application will be restarting infinitely with 1000ms between attempts.
 
 | Type     | Default                         | Required |
@@ -1337,6 +1368,10 @@ Specifies restarting policy for the local application. By default, the local app
 ### `localMode.restart.delayMsec`
 
 [localMode](#localmode) > [restart](#localmoderestart) > delayMsec
+
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
 
 Delay in milliseconds between the local application restart attempts. The default value is 1000ms.
 
@@ -1348,6 +1383,10 @@ Delay in milliseconds between the local application restart attempts. The defaul
 
 [localMode](#localmode) > [restart](#localmoderestart) > max
 
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
+
 Max number of the local application restarts. Unlimited by default.
 
 | Type     | Default | Required |
@@ -1357,6 +1396,10 @@ Max number of the local application restarts. Unlimited by default.
 ### `localMode.target`
 
 [localMode](#localmode) > target
+
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
 
 The remote Kubernetes resource to proxy traffic from. If specified, this is used instead of `defaultTarget`.
 
@@ -1368,6 +1411,10 @@ The remote Kubernetes resource to proxy traffic from. If specified, this is used
 
 [localMode](#localmode) > [target](#localmodetarget) > kind
 
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
+
 The kind of Kubernetes resource to find.
 
 | Type     | Allowed Values                           | Required |
@@ -1377,6 +1424,10 @@ The kind of Kubernetes resource to find.
 ### `localMode.target.name`
 
 [localMode](#localmode) > [target](#localmodetarget) > name
+
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
 
 The name of the resource, of the specified `kind`. If specified, you must also specify `kind`.
 
@@ -1388,6 +1439,10 @@ The name of the resource, of the specified `kind`. If specified, you must also s
 
 [localMode](#localmode) > [target](#localmodetarget) > podSelector
 
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
+
 A map of string key/value labels to match on any Pods in the namespace. When specified, a random ready Pod with matching labels will be picked as a target, so make sure the labels will always match a specific Pod type.
 
 | Type     | Required |
@@ -1397,6 +1452,10 @@ A map of string key/value labels to match on any Pods in the namespace. When spe
 ### `localMode.target.containerName`
 
 [localMode](#localmode) > [target](#localmodetarget) > containerName
+
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
 
 The name of a container in the target. Specify this if the target contains more than one container and the main container is not the first container in the spec.
 
@@ -1564,7 +1623,7 @@ Maximum duration (in seconds) of the task's execution.
 
 [tasks](#tasks) > cacheResult
 
-Set to false if you don't want the Runs's result to be cached. Use this if the Run needs to be run any time your project (or one or more of the Run's dependants) is deployed. Otherwise the Run is only re-run when its version changes, or when you run `garden run`.
+Set to false if you don't want the Run action result to be cached. Use this if the Run action needs to be run any time your project (or one or more of the Run action's dependants) is deployed. Otherwise the Run action is only re-run when its version changes, or when you run `garden run`.
 
 | Type      | Default | Required |
 | --------- | ------- | -------- |

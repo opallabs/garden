@@ -16,7 +16,7 @@ import pRetry, { type FailedAttemptError } from "p-retry"
 import { join } from "path"
 import respawn from "respawn"
 import split2 from "split2"
-import { GARDEN_GLOBAL_PATH, gardenEnv, MUTAGEN_DIR_NAME } from "./constants.js"
+import { GARDEN_GLOBAL_PATH, MUTAGEN_DIR_NAME } from "./constants.js"
 import { ChildProcessError, GardenError } from "./exceptions.js"
 import pMemoize from "./lib/p-memoize.js"
 import type { Log } from "./logger/log-entry.js"
@@ -31,7 +31,6 @@ import { styles } from "./logger/styles.js"
 import { dirname } from "node:path"
 import { makeDocsLinkStyled } from "./docs/common.js"
 import { syncGuideRelPath } from "./plugins/kubernetes/constants.js"
-import { emitNonRepeatableWarning } from "./warnings.js"
 
 const { mkdirp, pathExists } = fsExtra
 
@@ -325,21 +324,29 @@ class _MutagenMonitor extends TypedEventEmitter<MonitorEvents> {
 }
 
 function logMutagenDaemonWarning(log: Log) {
-  const daemonStopCommand = `GARDEN_ENABLE_NEW_SYNC=${!gardenEnv.GARDEN_ENABLE_NEW_SYNC} garden util mutagen daemon stop`
-  const redeploySyncCommand = `GARDEN_ENABLE_NEW_SYNC=${gardenEnv.GARDEN_ENABLE_NEW_SYNC} garden deploy --sync`
+  const daemonStopCommand = `garden util mutagen daemon stop`
+  const deleteEnvironmentCommand = `garden cleanup namespace`
+  const redeploySyncCommand = `garden deploy --sync`
+  const killProcessesCommand = `kill -9 $(pgrep mutagen)`
 
   log.warn(
     deline`
     It looks like the sync daemon might have been changed to a different version.\n
 
-    Therefore the sync daemon needs to be restarted, and the affected deploys must be redeployed.\n
+    Therefore the sync daemon needs to be restarted, current mutagen processes stopped and the affected deploys must be redeployed.\n
     Please, stop this command and follow the instructions below.\n
 
     1. Stop the active sync daemon by running this command ${styles.accent(styles.bold("from the project root directory"))}:\n
 
     ${styles.command(daemonStopCommand)}\n
 
-    2. Redeploy the affected deploys by running this command (specify the action names if necessary):\n
+    2. Kill all mutagen processes on your machine by running this command\n
+
+    ${styles.command(killProcessesCommand)}\n
+
+    3. Redeploy the affected deploys by running the following commands (specify the action names if necessary):\n
+
+    ${styles.command(deleteEnvironmentCommand)}\n
 
     ${styles.command(redeploySyncCommand)}\n
 
@@ -368,17 +375,6 @@ export class Mutagen {
     this.dataDir = getMutagenDataDir(params)
     this.activeSyncs = {}
     this.monitoring = false
-
-    emitNonRepeatableWarning(
-      this.log,
-      deline`
-    Warning!\n
-
-    Starting from 0.13.34, Garden uses the new sync daemon.
-    Thus, the default value of the \`GARDEN_ENABLE_NEW_SYNC\` environment variable is \`true\` now.\n
-
-    Please make sure you have tested the new sync daemon. See the troubleshooting docs for more details: ${makeDocsLinkStyled("guides/code-synchronization", "#restarting-sync-daemon")}\n`
-    )
 
     // TODO: This is a little noisy atm. We could be a bit smarter and filter some superfluous messages out.
     this.monitorHandler = (session) => {
@@ -569,9 +565,7 @@ export class Mutagen {
                 // 1. the old sync daemon is stopped
                 // 2. the target deploy action is not redeployed with the new sync machinery,
                 //    and `sync start` command is used
-                msg.includes(
-                  "unable to connect to beta: unable to connect to endpoint: unable to dial agent endpoint: version handshake error: version mismatch"
-                )
+                msg.includes("version mismatch")
               )
             }
 
@@ -940,136 +934,67 @@ export function parseSyncListResult(res: ExecaReturnValue): SyncSession[] {
   return parsed
 }
 
-const mutagenVersionLegacy = "0.15.0"
-const mutagenVersionNative = "0.17.6"
+export const mutagenVersion = "0.18.1"
 
-export const mutagenVersion = gardenEnv.GARDEN_ENABLE_NEW_SYNC ? mutagenVersionNative : mutagenVersionLegacy
-
-export function mutagenCliSpecLegacy(): PluginToolSpec {
-  return {
-    name: "mutagen",
-    version: mutagenVersionLegacy,
-    description: `The mutagen synchronization tool, v${mutagenVersionLegacy}`,
-    type: "binary",
-    _includeInGardenImage: false,
-    builds: [
-      {
-        platform: "darwin",
-        architecture: "amd64",
-        url: `https://github.com/garden-io/mutagen/releases/download/v${mutagenVersionLegacy}-garden-1/mutagen_darwin_amd64_v${mutagenVersionLegacy}.tar.gz`,
-        sha256: "370bf71e28f94002453921fda83282280162df7192bd07042bf622bf54507e3f",
-        extract: {
-          format: "tar",
-          targetPath: "mutagen",
-        },
+export const mutagenCliSpec: PluginToolSpec = {
+  name: "mutagen",
+  version: mutagenVersion,
+  description: `The mutagen synchronization tool, v${mutagenVersion}`,
+  type: "binary",
+  _includeInGardenImage: false,
+  builds: [
+    {
+      platform: "darwin",
+      architecture: "amd64",
+      url: `https://github.com/mutagen-io/mutagen/releases/download/v${mutagenVersion}/mutagen_darwin_amd64_v${mutagenVersion}.tar.gz`,
+      sha256: "7d06f7d8fcfe90bc7e55cc834a2f2f20c2e0af9ea9bc35911fc4341ad56a9bbf",
+      extract: {
+        format: "tar",
+        targetPath: "mutagen",
       },
-      {
-        platform: "darwin",
-        architecture: "arm64",
-        url: `https://github.com/garden-io/mutagen/releases/download/v${mutagenVersionLegacy}-garden-1/mutagen_darwin_arm64_v${mutagenVersionLegacy}.tar.gz`,
-        sha256: "a0a7be8bb37266ea184cb580004e1741a17c8165b2032ce4b191f23fead821a0",
-        extract: {
-          format: "tar",
-          targetPath: "mutagen",
-        },
+    },
+    {
+      platform: "darwin",
+      architecture: "arm64",
+      url: `https://github.com/mutagen-io/mutagen/releases/download/v${mutagenVersion}/mutagen_darwin_arm64_v${mutagenVersion}.tar.gz`,
+      sha256: "6f810416d9e5fc4fd5e18431146f8b3c5a2056ba5a24f76c1e66da86eb3257e2",
+      extract: {
+        format: "tar",
+        targetPath: "mutagen",
       },
-      {
-        platform: "linux",
-        architecture: "amd64",
-        url: `https://github.com/garden-io/mutagen/releases/download/v${mutagenVersionLegacy}-garden-1/mutagen_linux_amd64_v${mutagenVersionLegacy}.tar.gz`,
-        sha256: "e8c0708258ddd6d574f1b8f514fb214f9ab5d82aed38dd8db49ec10956e5063a",
-        extract: {
-          format: "tar",
-          targetPath: "mutagen",
-        },
+    },
+    {
+      platform: "linux",
+      architecture: "amd64",
+      url: `https://github.com/mutagen-io/mutagen/releases/download/v${mutagenVersion}/mutagen_linux_amd64_v${mutagenVersion}.tar.gz`,
+      sha256: "7735286c778cc438418209f24d03a64f3a0151c8065ef0fe079cfaf093af6f8f",
+      extract: {
+        format: "tar",
+        targetPath: "mutagen",
       },
-      {
-        platform: "linux",
-        architecture: "arm64",
-        url: `https://github.com/garden-io/mutagen/releases/download/v${mutagenVersionLegacy}-garden-1/mutagen_linux_arm64_v${mutagenVersionLegacy}.tar.gz`,
-        sha256: "80f108fc316223d8c3d1a48def18192e666b33a334b75aa3ebcc95938b774e64",
-        extract: {
-          format: "tar",
-          targetPath: "mutagen",
-        },
+    },
+    {
+      platform: "linux",
+      architecture: "arm64",
+      url: `https://github.com/mutagen-io/mutagen/releases/download/v${mutagenVersion}/mutagen_linux_arm64_v${mutagenVersion}.tar.gz`,
+      sha256: "bcba735aebf8cbc11da9b3742118a665599ac697fa06bc5751cac8dcd540db8a",
+      extract: {
+        format: "tar",
+        targetPath: "mutagen",
       },
-      {
-        platform: "windows",
-        architecture: "amd64",
-        url: `https://github.com/garden-io/mutagen/releases/download/v${mutagenVersionLegacy}-garden-1/mutagen_windows_amd64_v${mutagenVersionLegacy}.zip`,
-        sha256: "fdae26b43cc418b2525a937a1613bba36e74ea3dde4dbec3512a9abd004def95",
-        extract: {
-          format: "zip",
-          targetPath: "mutagen.exe",
-        },
+    },
+    {
+      platform: "windows",
+      architecture: "amd64",
+      url: `https://github.com/mutagen-io/mutagen/releases/download/v${mutagenVersion}/mutagen_windows_amd64_v${mutagenVersion}.zip`,
+      sha256: "76f8223d5e6b607efdd9516473669ae5492e4f142887352d59bc6934d1f07a2d",
+      extract: {
+        format: "zip",
+        targetPath: "mutagen.exe",
       },
-    ],
-  }
+    },
+  ],
 }
-
-export function mutagenCliSpecNative(): PluginToolSpec {
-  return {
-    name: "mutagen",
-    version: mutagenVersionNative,
-    description: `The mutagen synchronization tool, v${mutagenVersionNative}`,
-    type: "binary",
-    _includeInGardenImage: false,
-    builds: [
-      {
-        platform: "darwin",
-        architecture: "amd64",
-        url: `https://github.com/mutagen-io/mutagen/releases/download/v${mutagenVersionNative}/mutagen_darwin_amd64_v${mutagenVersionNative}.tar.gz`,
-        sha256: "f082eef2ae405a6bf5effdbcd000bb5fe2bc7b0968f86b2b54d9d3260c48c739",
-        extract: {
-          format: "tar",
-          targetPath: "mutagen",
-        },
-      },
-      {
-        platform: "darwin",
-        architecture: "arm64",
-        url: `https://github.com/mutagen-io/mutagen/releases/download/v${mutagenVersionNative}/mutagen_darwin_arm64_v${mutagenVersionNative}.tar.gz`,
-        sha256: "b6c35942ca9cbbbf726bfa249da554d829a8a28cad620a55e02d098d692121d1",
-        extract: {
-          format: "tar",
-          targetPath: "mutagen",
-        },
-      },
-      {
-        platform: "linux",
-        architecture: "amd64",
-        url: `https://github.com/mutagen-io/mutagen/releases/download/v${mutagenVersionNative}/mutagen_linux_amd64_v${mutagenVersionNative}.tar.gz`,
-        sha256: "1b826e121be59506e133d90dc2b8a0c820b92f480d9b2b230d8b389d6178a6cf",
-        extract: {
-          format: "tar",
-          targetPath: "mutagen",
-        },
-      },
-      {
-        platform: "linux",
-        architecture: "arm64",
-        url: `https://github.com/mutagen-io/mutagen/releases/download/v${mutagenVersionNative}/mutagen_linux_arm64_v${mutagenVersionNative}.tar.gz`,
-        sha256: "2a383cb572a1bdad83f7c4be3cc4a541a58e6c9e11e326ee4cc2d0e14f9d003a",
-        extract: {
-          format: "tar",
-          targetPath: "mutagen",
-        },
-      },
-      {
-        platform: "windows",
-        architecture: "amd64",
-        url: `https://github.com/mutagen-io/mutagen/releases/download/v${mutagenVersionNative}/mutagen_windows_amd64_v${mutagenVersionNative}.zip`,
-        sha256: "3019ccb556afb39cf2213adcacab97576c4419f8d08d3a55d063a5c773ec6d35",
-        extract: {
-          format: "zip",
-          targetPath: "mutagen.exe",
-        },
-      },
-    ],
-  }
-}
-
-export const mutagenCliSpec = gardenEnv.GARDEN_ENABLE_NEW_SYNC ? mutagenCliSpecNative() : mutagenCliSpecLegacy()
 
 export const mutagenCli = new PluginTool(mutagenCliSpec)
 
@@ -1120,7 +1045,7 @@ export const mutagenFauxSshSpec: PluginToolSpec = {
       sha256: "c7645e615efc9e5139f8a281abb9acae61ea2ce2084ea25aa438438da3481167",
       extract: {
         format: "tar",
-        targetPath: "mutagen",
+        targetPath: "ssh",
       },
     },
     {
@@ -1139,14 +1064,9 @@ export const mutagenFauxSshSpec: PluginToolSpec = {
 export const mutagenFauxSsh = new PluginTool(mutagenFauxSshSpec)
 
 /**
- * Returns the path to the location of the faux SSH Mutagen transport if the original Mutagen is used
- * (i.e. if {@code GARDEN_ENABLE_NEW_SYNC=true}) or {@code undefined} otherwise.
+ * Returns the path to the location of the faux SSH Mutagen transport
  */
 async function getMutagenSshPath(log: Log): Promise<string | undefined> {
-  if (!gardenEnv.GARDEN_ENABLE_NEW_SYNC) {
-    return undefined
-  }
-
   const fauxSshToolPath = await mutagenFauxSsh.ensurePath(log)
   // This must be the dir containing the faux SSH binary,
   // not the full path that includes the binary name.

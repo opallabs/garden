@@ -170,17 +170,18 @@ export const baseBuildSpecSchema = createSchema({
 })
 
 // These fields are validated immediately when loading the config file
-const coreModuleSpecKeys = memoize(() => ({
+const coreModuleSpecSchemaKeys = memoize(() => ({
   apiVersion: unusedApiVersionSchema(),
   kind: joi.string().default("Module").valid("Module"),
   type: joiIdentifier().required().description("The type of this module.").example("container"),
   name: joiUserIdentifier().required().description("The name of this module.").example("my-sweet-module"),
 }))
+export const coreModuleSpecKeys = () => Object.keys(coreModuleSpecSchemaKeys())
 
 export const coreModuleSpecSchema = createSchema({
   name: "core-module-spec",
   description: "Configure a module whose sources are located in this directory.",
-  keys: coreModuleSpecKeys,
+  keys: coreModuleSpecSchemaKeys,
   allowUnknown: true,
   meta: { extendable: true },
 })
@@ -214,7 +215,7 @@ export const baseModuleSpecKeys = memoize(() => ({
       dedent`
       Set this to \`true\` to disable the module. You can use this with conditional template strings to disable modules based on, for example, the current environment or other variables (e.g. \`disabled: \${environment.name == "prod"}\`). This can be handy when you only need certain modules for specific environments, e.g. only for development.
 
-      Disabling a module means that any services, tasks and tests contained in it will not be deployed or run. It also means that the module is not built _unless_ it is declared as a build dependency by another enabled module (in which case building this module is necessary for the dependant to be built).
+      Disabling a module means that any services, tasks and tests contained in it will not be build, deployed or run.
 
       If you disable the module, and its services, tasks or tests are referenced as _runtime_ dependencies, Garden will automatically ignore those dependency declarations. Note however that template strings referencing the module's service or task outputs (i.e. runtime outputs) will fail to resolve when the module is disabled, so you need to make sure to provide alternate values for those if you're using them, using conditional expressions.
     `

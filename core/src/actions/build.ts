@@ -31,6 +31,7 @@ import { DEFAULT_BUILD_TIMEOUT_SEC } from "../constants.js"
 import { createBuildTask } from "../tasks/build.js"
 import type { BaseActionTaskParams, ExecuteTask } from "../tasks/base.js"
 import { ResolveActionTask } from "../tasks/resolve-action.js"
+import type { ResolvedTemplate } from "../template/types.js"
 
 export interface BuildCopyFrom {
   build: string
@@ -142,8 +143,8 @@ export const buildActionConfigSchema = createSchema({
 
 export class BuildAction<
   C extends BuildActionConfig<any, any> = BuildActionConfig<any, any>,
-  StaticOutputs extends {} = any,
-  RuntimeOutputs extends {} = any,
+  StaticOutputs extends Record<string, unknown> = any,
+  RuntimeOutputs extends Record<string, unknown> = any,
 > extends BaseAction<C, StaticOutputs, RuntimeOutputs> {
   override kind = "Build" as const
   // TODO:
@@ -194,8 +195,8 @@ export class BuildAction<
 // TODO: see if we can avoid the duplication here with ResolvedRuntimeAction
 export class ResolvedBuildAction<
     C extends BuildActionConfig<any, any> = BuildActionConfig<any, any>,
-    StaticOutputs extends {} = any,
-    RuntimeOutputs extends {} = any,
+    StaticOutputs extends Record<string, unknown> = any,
+    RuntimeOutputs extends Record<string, unknown> = any,
   >
   extends BuildAction<C, StaticOutputs, RuntimeOutputs>
   implements ResolvedActionExtension<C, StaticOutputs, RuntimeOutputs>
@@ -247,12 +248,16 @@ export class ResolvedBuildAction<
   getOutputs() {
     return this._staticOutputs
   }
+
+  getResolvedVariables(): Record<string, ResolvedTemplate> {
+    return this.params.resolvedVariables
+  }
 }
 
 export class ExecutedBuildAction<
     C extends BuildActionConfig<any, any> = BuildActionConfig<any, any>,
-    StaticOutputs extends {} = any,
-    RuntimeOutputs extends {} = any,
+    StaticOutputs extends Record<string, unknown> = any,
+    RuntimeOutputs extends Record<string, unknown> = any,
   >
   extends ResolvedBuildAction<C, StaticOutputs, RuntimeOutputs>
   implements ExecutedActionExtension<C, StaticOutputs, RuntimeOutputs>

@@ -36,6 +36,7 @@ import { getDefaultProfiler, Profile, type Profiler } from "../util/profiling.js
 import AsyncLock from "async-lock"
 import { makeDocsLinkStyled } from "../docs/common.js"
 import { RuntimeError } from "../exceptions.js"
+import { sliceToBatches } from "../util/util.js"
 
 const scanLock = new AsyncLock()
 
@@ -122,6 +123,7 @@ export interface GetFilesParams {
   filter?: (path: string) => boolean
   failOnPrompt?: boolean
   scanRoot: string | undefined
+  hashUntrackedFiles?: boolean
 }
 
 export interface BaseIncludeExcludeFiles {
@@ -170,8 +172,8 @@ export abstract class VcsHandler {
   protected readonly garden?: Garden
   protected readonly gardenDirPath: string
   protected readonly ignoreFile: string
-  protected readonly cache: TreeCache
   protected readonly profiler: Profiler
+  public readonly cache: TreeCache
 
   constructor(params: VcsHandlerParams) {
     this.garden = params.garden
@@ -310,22 +312,25 @@ export abstract class VcsHandler {
    * reduces duplicate scanning of the same directories (since fewer unique roots mean
    * more tree cache hits).
    */
-  async getMinimalRoots(log: Log, paths: string[]) {
+  async getMinimalRoots(log: Log, paths: Set<string>) {
     const repoRoots: { [path: string]: string } = {}
     const outputs: { [path: string]: string } = {}
     const rootsToPaths: { [repoRoot: string]: string[] } = {}
 
-    await Promise.all(
-      paths.map(async (path) => {
-        const repoRoot = await this.getRepoRoot(log, path)
-        repoRoots[path] = repoRoot
-        if (rootsToPaths[repoRoot]) {
-          rootsToPaths[repoRoot].push(path)
-        } else {
-          rootsToPaths[repoRoot] = [path]
-        }
-      })
-    )
+    // Avoid too many concurrent git commands
+    for (const batch of sliceToBatches([...paths], 10)) {
+      await Promise.all(
+        batch.map(async (path) => {
+          const repoRoot = await this.getRepoRoot(log, path)
+          repoRoots[path] = repoRoot
+          if (rootsToPaths[repoRoot]) {
+            rootsToPaths[repoRoot].push(path)
+          } else {
+            rootsToPaths[repoRoot] = [path]
+          }
+        })
+      )
+    }
 
     for (const path of paths) {
       const repoRoot = repoRoots[path]
@@ -403,9 +408,8 @@ export function hashModuleVersion(
   // Otherwise, we use the full module config, omitting the configPath, path, and outputs fields, as well as individual
   // entity configuration fields, as these often vary between environments and runtimes but are unlikely to impact the
   // build output.
-  const configToHash =
-    moduleConfig.buildConfig ||
-    pick(moduleConfig, ["apiVersion", "name", "spec", "type", "variables", "varfile", "inputs"])
+  // Variables, varfile and inputs do not matter for the purposes of the module version.
+  const configToHash = moduleConfig.buildConfig || pick(moduleConfig, ["apiVersion", "name", "spec", "type"])
 
   const configString = serializeConfig(configToHash)
 

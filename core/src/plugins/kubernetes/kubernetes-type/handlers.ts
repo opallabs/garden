@@ -15,7 +15,7 @@ import type { KubernetesPluginContext, KubernetesProvider } from "../config.js"
 import { configureSyncMode, convertKubernetesModuleDevModeSpec } from "../sync.js"
 import { apply, deleteObjectsBySelector } from "../kubectl.js"
 import { streamK8sLogs } from "../logs.js"
-import { getActionNamespace, getActionNamespaceStatus } from "../namespace.js"
+import { deleteNamespaces, getActionNamespace, getActionNamespaceStatus } from "../namespace.js"
 import { getForwardablePorts, killPortForwards } from "../port-forward.js"
 import { getK8sIngresses } from "../status/ingress.js"
 import type { ResourceStatus } from "../status/status.js"
@@ -27,14 +27,8 @@ import {
   waitForResources,
 } from "../status/status.js"
 import type { BaseResource, KubernetesResource, KubernetesServerResource, SyncableResource } from "../types.js"
-import type { ManifestMetadata, ParsedMetadataManifestData } from "./common.js"
-import {
-  convertServiceResource,
-  gardenNamespaceAnnotationValue,
-  getManifests,
-  getMetadataManifest,
-  parseMetadataResource,
-} from "./common.js"
+import type { KubernetesDeployActionSpecFileSources, ManifestMetadata, ParsedMetadataManifestData } from "./common.js"
+import { convertServiceResource, getManifests, getMetadataManifest, parseMetadataResource } from "./common.js"
 import type { KubernetesModule } from "./module-config.js"
 import { configureKubernetesModule } from "./module-config.js"
 import { configureLocalMode, startServiceInLocalMode } from "../local-mode.js"
@@ -46,12 +40,15 @@ import type { ActionMode, Resolved } from "../../../actions/types.js"
 import { deployStateToActionState } from "../../../plugin/handlers/Deploy/get-status.js"
 import type { ResolvedDeployAction } from "../../../actions/deploy.js"
 import { isSha256 } from "../../../util/hashing.js"
+import { prepareSecrets } from "../secrets.js"
+import { GardenApiVersion } from "../../../constants.js"
 
 export const kubernetesHandlers: Partial<ModuleActionHandlers<KubernetesModule>> = {
   configure: configureKubernetesModule,
 
   convert: async (params) => {
-    const { module, services, tasks, tests, dummyBuild, convertBuildDependency, prepareRuntimeDependencies } = params
+    const { ctx, module, services, tasks, tests, dummyBuild, convertBuildDependency, prepareRuntimeDependencies } =
+      params
     const actions: (ExecBuildConfig | KubernetesActionConfig)[] = []
 
     if (dummyBuild) {
@@ -64,6 +61,22 @@ export const kubernetesHandlers: Partial<ModuleActionHandlers<KubernetesModule>>
     const files = module.spec.files || []
     const manifests = module.spec.manifests || []
 
+    const apiVersion = ctx.projectApiVersion
+    let fileSources: KubernetesDeployActionSpecFileSources
+    if (apiVersion === GardenApiVersion.v2) {
+      fileSources = {
+        files: [],
+        manifestFiles: [],
+        manifestTemplates: files,
+      }
+    } else {
+      fileSources = {
+        files,
+        manifestFiles: [],
+        manifestTemplates: [],
+      }
+    }
+
     const deployAction: KubernetesDeployActionConfig = {
       kind: "Deploy",
       type: "kubernetes",
@@ -72,12 +85,12 @@ export const kubernetesHandlers: Partial<ModuleActionHandlers<KubernetesModule>>
 
       build: dummyBuild?.name,
       dependencies: prepareRuntimeDependencies(module.spec.dependencies, dummyBuild),
-      include: module.spec.files,
+      include: files,
       timeout: service.spec.timeout,
 
       spec: {
         ...omit(module.spec, ["name", "build", "dependencies", "serviceResource", "tasks", "tests", "sync", "devMode"]),
-        files,
+        ...fileSources,
         manifests,
         sync: convertKubernetesModuleDevModeSpec(module, service, serviceResource),
       },
@@ -117,7 +130,7 @@ export const kubernetesHandlers: Partial<ModuleActionHandlers<KubernetesModule>>
         spec: {
           ...omit(task.spec, ["name", "description", "dependencies", "disabled", "timeout"]),
           resource,
-          files,
+          ...fileSources,
           manifests,
           namespace: module.spec.namespace,
         },
@@ -145,7 +158,7 @@ export const kubernetesHandlers: Partial<ModuleActionHandlers<KubernetesModule>>
         spec: {
           ...omit(test.spec, ["name", "dependencies", "disabled", "timeout"]),
           resource,
-          files,
+          ...fileSources,
           manifests,
           namespace: module.spec.namespace,
         },
@@ -371,13 +384,17 @@ export const kubernetesDeploy: DeployActionHandler<"deploy", KubernetesDeployAct
 
   const manifests = await getManifests({ ctx, api, log, action, defaultNamespace: namespace })
 
+  // Ensure secrets are created in the target namespace
+  const secrets = [...provider.config.copySecrets, ...provider.config.imagePullSecrets]
+  await prepareSecrets({ api, namespace, secrets, log })
+
   // We separate out manifests for namespace resources, since we don't want to apply a prune selector
   // when applying them.
   const [namespaceManifests, otherManifests] = partition(manifests, (m) => m.kind === "Namespace")
 
   if (namespaceManifests.length > 0) {
     // Don't prune namespaces
-    await apply({ log, ctx, api, provider, manifests: namespaceManifests })
+    await apply({ log, ctx, api, provider, manifests: namespaceManifests, applyArgs: spec.applyArgs })
     await waitForResources({
       namespace,
       ctx,
@@ -410,7 +427,15 @@ export const kubernetesDeploy: DeployActionHandler<"deploy", KubernetesDeployAct
 
     // TODO: Similarly to `container` deployments, check if immutable fields have changed (and delete before
     // redeploying, unless in a production environment).
-    await apply({ log, ctx, api, provider: k8sCtx.provider, manifests: preparedManifests, pruneLabels })
+    await apply({
+      log,
+      ctx,
+      api,
+      provider: k8sCtx.provider,
+      manifests: preparedManifests,
+      pruneLabels,
+      applyArgs: spec.applyArgs,
+    })
     await waitForResources({
       namespace,
       ctx,
@@ -422,7 +447,6 @@ export const kubernetesDeploy: DeployActionHandler<"deploy", KubernetesDeployAct
       waitForJobs: spec.waitForJobs,
     })
   }
-
   const status = await getKubernetesDeployStatus(<any>params)
 
   // Make sure port forwards work after redeployment
@@ -486,20 +510,7 @@ export const deleteKubernetesDeploy: DeployActionHandler<"delete", KubernetesDep
   const [namespaceManifests, otherManifests] = partition(manifests, (m) => m.kind === "Namespace")
 
   if (namespaceManifests.length > 0) {
-    await Promise.all(
-      namespaceManifests.map((ns) => {
-        const selector = `${gardenAnnotationKey("service")}=${gardenNamespaceAnnotationValue(ns.metadata.name)}`
-        return deleteObjectsBySelector({
-          log,
-          ctx,
-          provider,
-          namespace,
-          selector,
-          objectTypes: ["Namespace"],
-          includeUninitialized: false,
-        })
-      })
-    )
+    await deleteNamespaces({ namespaces: namespaceManifests.map((ns) => ns.metadata.name), api, ctx, log })
   }
   if (otherManifests.length > 0) {
     await deleteObjectsBySelector({
@@ -590,7 +601,7 @@ async function configureSpecialModesForManifests({
       log,
     })
   } else if (mode === "sync" && spec.sync && !isEmpty(spec.sync)) {
-    // The "sync-mode" annotation is set in `configureDevMode`.
+    // The "sync-mode" annotation is already set.
     return configureSyncMode({
       ctx,
       log,

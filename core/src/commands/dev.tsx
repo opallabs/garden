@@ -85,6 +85,7 @@ Use ${styles.bold("up/down")} arrow keys to scroll through your command history.
 
   override async action(params: ActionParams): Promise<CommandResult> {
     const { log } = params
+
     this.setProps(params.garden.sessionId, params.cli?.plugins || [])
 
     const logger = log.root
@@ -190,7 +191,7 @@ Use ${styles.bold("up/down")} arrow keys to scroll through your command history.
   }
 
   private async initCommandHandler(params: ActionParams) {
-    const { garden, log, opts } = params
+    const { garden, log, opts, cli } = params
 
     // override the session for this manager to ensure we inherit from
     // the initial garden dummy instance
@@ -209,6 +210,7 @@ Use ${styles.bold("up/down")} arrow keys to scroll through your command history.
       extraCommands: [new HelpCommand(), new QuitCommand(quit), new QuietCommand(), new QuiteCommand()],
       globalOpts: pick(opts, Object.keys(globalOptions)),
       history: await garden.localConfigStore.get("devCommandHistory"),
+      cli,
       serveCommand: this,
     })
     this.commandLine = cl

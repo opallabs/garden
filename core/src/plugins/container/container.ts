@@ -26,7 +26,7 @@ import {
   validateContainerBuild,
 } from "./build.js"
 import type { ConfigureModuleParams } from "../../plugin/handlers/Module/configure.js"
-import { dedent, naturalList } from "../../util/string.js"
+import { dedent, deline, naturalList } from "../../util/string.js"
 import type { Provider, BaseProviderConfig } from "../../config/provider.js"
 import { providerConfigBaseSchema } from "../../config/provider.js"
 import type { GetModuleOutputsParams } from "../../plugin/handlers/Module/get-outputs.js"
@@ -48,59 +48,73 @@ import type { Resolved } from "../../actions/types.js"
 import { getDeployedImageId } from "../kubernetes/container/util.js"
 import type { DeepPrimitiveMap } from "../../config/common.js"
 import { joi } from "../../config/common.js"
-import { DEFAULT_DEPLOY_TIMEOUT_SEC, gardenEnv } from "../../constants.js"
+import { DEFAULT_DEPLOY_TIMEOUT_SEC, GardenApiVersion, gardenEnv } from "../../constants.js"
 import type { ExecBuildConfig } from "../exec/build.js"
 import type { PluginToolSpec } from "../../plugin/tools.js"
 import type { PluginContext } from "../../plugin-context.js"
+import { actionReferenceToString } from "../../actions/base.js"
+import { RootLogger } from "../../logger/logger.js"
+import { styles } from "../../logger/styles.js"
+import { makeDeprecationMessage, reportDeprecatedFeatureUsage } from "../../util/deprecations.js"
+import { getGlobalProjectApiVersion } from "../../project-api-version.js"
 
 export const CONTAINER_STATUS_CONCURRENCY_LIMIT = gardenEnv.GARDEN_HARD_CONCURRENCY_LIMIT
 export const CONTAINER_BUILD_CONCURRENCY_LIMIT_LOCAL = 5
 export const CONTAINER_BUILD_CONCURRENCY_LIMIT_CLOUD_BUILDER = 20
 
+export type GardenContainerBuilderConfig = {
+  enabled: boolean
+}
+
 export interface ContainerProviderConfig extends BaseProviderConfig {
   dockerBuildExtraFlags?: string[]
-  gardenCloudBuilder?: {
-    enabled: boolean
-  }
+  /**
+   * @deprecated use {@link #gardenContainerBuilder} instead
+   */
+  gardenCloudBuilder?: GardenContainerBuilderConfig
+  gardenContainerBuilder?: GardenContainerBuilderConfig
 }
+
+export const gardenContainerBuilderSchema = () =>
+  joi
+    .object()
+    .optional()
+    .keys({
+      enabled: joi.boolean().default(false).description(dedent`
+            Enable Garden Container Builder, which can speed up builds significantly using fast machines and extremely fast caching.
+
+            By running \`GARDEN_CONTAINER_BUILDER=1 garden build\` you can try Garden Container Builder temporarily without any changes to your Garden configuration.
+            The environment variable \`GARDEN_CONTAINER_BUILDER\` can also be used to override this setting, if enabled in the configuration. Set it to \`false\` or \`0\` to temporarily disable Garden Container Builder.
+
+            Under the hood, enabling this option means that Garden will install a remote buildx driver on your local Docker daemon, and use that for builds. See also https://docs.docker.com/build/drivers/remote/
+
+            If service limits are reached, or Garden Container Builder is not available, Garden will fall back to building images locally, or it falls back to building in your Kubernetes cluster in case in-cluster building is configured in the Kubernetes provider configuration.
+
+            Please note that when enabling Container Builder together with in-cluster building, you need to authenticate to your \`deploymentRegistry\` from the local machine (e.g. by running \`docker login\`).
+            `),
+    })
 
 export const configSchema = () =>
   providerConfigBaseSchema()
     .keys({
-      dockerBuildExtraFlags: joi.array().items(joi.string()).description(dedent`
+      dockerBuildExtraFlags: joi.sparseArray().items(joi.string()).description(dedent`
           **Stability: Experimental**. Subject to breaking changes within minor releases.
 
           Extra flags to pass to the \`docker build\` command. Will extend the \`spec.extraFlags\` specified in each container Build action.
           `),
-      // Cloud builder
-      gardenCloudBuilder: joi
-        .object()
-        .optional()
-        .keys({
-          enabled: joi.boolean().default(false).description(dedent`
-            **Stability: Experimental**. Subject to breaking changes within minor releases.
-
-            Enable Garden Cloud Builder, which can speed up builds significantly using fast machines and extremely fast caching.
-
-            by running \`GARDEN_CLOUD_BUILDER=1 garden build\` you can try Garden Cloud Builder temporarily without any changes to your Garden configuration.
-            The environment variable \`GARDEN_CLOUD_BUILDER\` can also be used to override this setting, if enabled in the configuration. Set it to \`false\` or \`0\` to temporarily disable Garden Cloud Builder.
-
-            Under the hood, enabling this option means that Garden will install a remote buildx driver on your local Docker daemon, and use that for builds. See also https://docs.docker.com/build/drivers/remote/
-
-            If service limits are reached, or Garden Cloud Builder is not available, Garden will fall back to building images locally, or it falls back to building in your Kubernetes cluster in case in-cluster building is configured in the Kubernetes provider configuration.
-
-            Please note that when enabling Cloud Builder together with in-cluster building, you need to authenticate to your \`deploymentRegistry\` from the local machine (e.g. by running \`docker login\`).
-            `),
-        }).description(dedent`
-        **Stability: Experimental**. Subject to breaking changes within minor releases.
-        `),
+      // Deprecate old config syntax
+      gardenCloudBuilder: gardenContainerBuilderSchema().meta({
+        deprecated: makeDeprecationMessage({ deprecation: "gardenCloudBuilder" }),
+      }),
+      // Garden Container builder
+      gardenContainerBuilder: gardenContainerBuilderSchema(),
     })
     .unknown(false)
 
 export type ContainerProvider = Provider<ContainerProviderConfig>
 export type ContainerPluginContext = PluginContext<ContainerProviderConfig>
 
-export const dockerVersion = "25.0.2"
+export const dockerVersion = "27.1.1"
 export const dockerSpec: PluginToolSpec = {
   name: "docker",
   version: dockerVersion,
@@ -112,7 +126,7 @@ export const dockerSpec: PluginToolSpec = {
       platform: "darwin",
       architecture: "amd64",
       url: `https://download.docker.com/mac/static/stable/x86_64/docker-${dockerVersion}.tgz`,
-      sha256: "3c7e0d69bd7bc78d39a48d6e2102979efdc128e1ee7e730be93e69ff7e389655",
+      sha256: "d2e916f1dfc1a107804d0c1b44242ca2884d5ed07507ec91014648b35459aff4",
       extract: {
         format: "tar",
         targetPath: "docker/docker",
@@ -122,7 +136,7 @@ export const dockerSpec: PluginToolSpec = {
       platform: "darwin",
       architecture: "arm64",
       url: `https://download.docker.com/mac/static/stable/aarch64/docker-${dockerVersion}.tgz`,
-      sha256: "6b95f574215fc92608cdef7d83d4ab8ab17107b4eade95b2b915705bfc3260c7",
+      sha256: "a8d011a64b79957f8abe7e3ff56d852352bf9de529d214eee99d1bb1ce3e3d2d",
       extract: {
         format: "tar",
         targetPath: "docker/docker",
@@ -132,7 +146,7 @@ export const dockerSpec: PluginToolSpec = {
       platform: "linux",
       architecture: "amd64",
       url: `https://download.docker.com/linux/static/stable/x86_64/docker-${dockerVersion}.tgz`,
-      sha256: "a83b394570052c12ac5255801b322676092b4985d82f4c1a92253f45de45dc99",
+      sha256: "118da6b8fc8e8b6c086ab0dd5e64ee549376c3a3f963723bbc9a46db475bf21f",
       extract: {
         format: "tar",
         targetPath: "docker/docker",
@@ -142,7 +156,7 @@ export const dockerSpec: PluginToolSpec = {
       platform: "linux",
       architecture: "arm64",
       url: `https://download.docker.com/linux/static/stable/aarch64/docker-${dockerVersion}.tgz`,
-      sha256: "6a2cb41789469bc6ecddff22be014540f8a92fa0bee9fcf0771e3179ef3fc673",
+      sha256: "86a395f67a5a23d8eb207ab5a9ab32a51f7fccd8b18dae40887e738db95c6bc4",
       extract: {
         format: "tar",
         targetPath: "docker/docker",
@@ -152,7 +166,7 @@ export const dockerSpec: PluginToolSpec = {
       platform: "windows",
       architecture: "amd64",
       url: `https://github.com/rgl/docker-ce-windows-binaries-vagrant/releases/download/v${dockerVersion}/docker-${dockerVersion}.zip`,
-      sha256: "25ff5d9dd8ae176dd30fd97b0b99a896d598fa62fca0b7171b45887ad4d3661b",
+      sha256: "747edbca83e494f160633e07749f4b70ae83c8e81fef36f4b7168048ded64817",
       extract: {
         format: "zip",
         targetPath: "docker/docker.exe",
@@ -198,6 +212,46 @@ export const regctlCliSpec: PluginToolSpec = {
       architecture: "amd64",
       url: `https://github.com/regclient/regclient/releases/download/v${regctlCliVersion}/regctl-windows-amd64.exe`,
       sha256: "44b2d5e79ef457e575d2b09bc1f27500cf90b733651793f4e76e23c9b8fc1803",
+    },
+  ],
+}
+
+const progressToolVersion = "0.0.1"
+const progressToolSpec: PluginToolSpec = {
+  name: "standalone-progressui",
+  version: progressToolVersion,
+  description: "Helper that utilizes the buildkit library to parse docker logs from progress json output.",
+  type: "binary",
+  builds: [
+    {
+      platform: "darwin",
+      architecture: "arm64",
+      url: `https://download.garden.io/standalone-progressui/${progressToolVersion}/standalone-progressui-darwin-arm64`,
+      sha256: "633b74d5c37b53757322184e8e453e9982e0615356047e14637d437fa85f0653",
+    },
+    {
+      platform: "darwin",
+      architecture: "amd64",
+      url: `https://download.garden.io/standalone-progressui/${progressToolVersion}/standalone-progressui-darwin-amd64`,
+      sha256: "f3d156ecd0ad307e54caa0abe2fe2b42b2b69eb78ff546ff949921b6e232b92c",
+    },
+    {
+      platform: "linux",
+      architecture: "arm64",
+      url: `https://download.garden.io/standalone-progressui/${progressToolVersion}/standalone-progressui-linux-arm64`,
+      sha256: "20a4991f1efc2aae0cca359308feba7e6361a2f92941fdad1f7f14137d94eb6c",
+    },
+    {
+      platform: "linux",
+      architecture: "amd64",
+      url: `https://download.garden.io/standalone-progressui/${progressToolVersion}/standalone-progressui-linux-amd64`,
+      sha256: "f3b8534b57939688d5f1ab11d8999d6854b08eef43af1619b641a51bd5f7c8bd",
+    },
+    {
+      platform: "windows",
+      architecture: "amd64",
+      url: `https://download.garden.io/standalone-progressui/${progressToolVersion}/standalone-progressui-windows-amd64`,
+      sha256: "c83935be933413ecedb92fb6a70c235670598059dab0d12cc9b4bb0b0f652d25",
     },
   ],
 }
@@ -341,10 +395,19 @@ function convertContainerModuleRuntimeActions(
   const { module, services, tasks, tests, prepareRuntimeDependencies } = convertParams
   const actions: ContainerActionConfig[] = []
 
-  let deploymentImageId = module.spec.image
-  if (deploymentImageId) {
-    // If `module.spec.image` is set, but the image id is missing a tag, we need to add the module version as the tag.
-    deploymentImageId = containerHelpers.getModuleDeploymentImageId(module, module.version, undefined)
+  let deploymentImageId: string | undefined
+
+  // If the module needs container build, we need to add the module version as the tag.
+  // If it doesn't need a container build, the module doesn't have a build action and just downloads a prebuilt image
+  if (needsContainerBuild && buildAction) {
+    // Hack: we are in the container provider, and do not yet have access to kubernetes provider config.
+    //  So, we cannot get the info on the deployment container registry.
+    //  Thus, we use template string here to reference the deploymentImageId.
+    //  This is safe because module name is validated here,
+    //  and the valid module name always results in a valid template expression.
+    deploymentImageId = `\${actions.build.${buildAction.name}.outputs.deploymentImageId}`
+  } else {
+    deploymentImageId = module.spec.image
   }
 
   const volumeModulesReferenced: string[] = []
@@ -374,7 +437,6 @@ function convertContainerModuleRuntimeActions(
       ...convertParams.baseFields,
 
       disabled: service.disabled,
-      build: buildAction?.name,
       dependencies: prepareRuntimeDependencies(service.spec.dependencies, buildAction),
 
       timeout: service.spec.timeout || DEFAULT_DEPLOY_TIMEOUT_SEC,
@@ -396,13 +458,12 @@ function convertContainerModuleRuntimeActions(
       ...convertParams.baseFields,
 
       disabled: task.disabled,
-      build: buildAction?.name,
       dependencies: prepareRuntimeDependencies(task.spec.dependencies, buildAction),
       timeout: task.spec.timeout,
 
       spec: {
         ...omit(task.spec, ["name", "description", "dependencies", "disabled", "timeout"]),
-        image: needsContainerBuild ? undefined : module.spec.image,
+        image: deploymentImageId,
         volumes: [],
       },
     }
@@ -417,13 +478,12 @@ function convertContainerModuleRuntimeActions(
       ...convertParams.baseFields,
 
       disabled: test.disabled,
-      build: buildAction?.name,
       dependencies: prepareRuntimeDependencies(test.spec.dependencies, buildAction),
       timeout: test.spec.timeout,
 
       spec: {
         ...omit(test.spec, ["name", "dependencies", "disabled", "timeout"]),
-        image: needsContainerBuild ? undefined : module.spec.image,
+        image: deploymentImageId,
         volumes: [],
       },
     }
@@ -660,13 +720,37 @@ export const gardenPlugin = () =>
       },
     ],
 
-    tools: [dockerSpec, regctlCliSpec],
+    tools: [dockerSpec, regctlCliSpec, progressToolSpec],
   })
 
 function validateRuntimeCommon(action: Resolved<ContainerRuntimeAction>) {
   const { build } = action.getConfig()
   const { image, volumes } = action.getSpec()
 
+  if (build) {
+    const log = RootLogger.getInstance().createLog()
+    const configPath = action.configPath()
+    // Report concrete action name for better UX
+    log.warn(
+      deline`Action ${styles.highlight(action.longDescription())}
+          ${configPath ? `- defined in ${styles.highlight(configPath)} -` : ""}
+          specifies deprecated config field ${styles.highlight("build")}.`
+    )
+    // Report general deprecation warning
+    reportDeprecatedFeatureUsage({
+      log,
+      deprecation: "buildConfigFieldOnRuntimeActions",
+    })
+  }
+
+  // TODO(0.14): Make spec.image required in the schema, and remove this if statement.
+  if (getGlobalProjectApiVersion() === GardenApiVersion.v2 && !image) {
+    throw new ConfigurationError({
+      message: `${action.longDescription()} must specify \`spec.image\`.`,
+    })
+  }
+
+  // TODO(0.14): The entire if/else if/else if block can be removed
   if (!build && !image) {
     throw new ConfigurationError({
       message: `${action.longDescription()} must specify one of \`build\` or \`spec.image\``,
@@ -689,9 +773,9 @@ function validateRuntimeCommon(action: Resolved<ContainerRuntimeAction>) {
   for (const volume of volumes) {
     if (volume.action && !action.hasDependency(volume.action)) {
       throw new ConfigurationError({
-        message: `${action.longDescription()} references action ${
+        message: `${action.longDescription()} references action ${actionReferenceToString(
           volume.action
-        } under \`spec.volumes\` but does not declare a dependency on it. Please add an explicit dependency on the volume action.`,
+        )} under \`spec.volumes\` but does not declare a dependency on it. Please add an explicit dependency on the volume action.`,
       })
     }
   }

@@ -19,7 +19,7 @@ Stack outputs are made available as service outputs, that can be referenced by o
 
 Note that you can also declare a Terraform root in the `terraform` provider configuration by setting the `initRoot` parameter. This may be preferable if you need the outputs of the Terraform stack to be available to other provider configurations, e.g. if you spin up an environment with the Terraform provider, and then use outputs from that to configure another provider or other modules via `${providers.terraform.outputs.<key>}` template strings.
 
-See the [Terraform guide](https://docs.garden.io/advanced/terraform) for a high-level introduction to the `terraform` provider.
+See the [Terraform guide](https://docs.garden.io/bonsai-0.13/advanced/terraform) for a high-level introduction to the `terraform` provider.
 
 Below is the full schema reference. For an introduction to configuring Garden modules, please look at our [Configuration
 guide](../../using-garden/configuration-overview.md).
@@ -80,9 +80,7 @@ description:
 # based on, for example, the current environment or other variables (e.g. `disabled: ${environment.name == "prod"}`).
 # This can be handy when you only need certain modules for specific environments, e.g. only for development.
 #
-# Disabling a module means that any services, tasks and tests contained in it will not be deployed or run. It also
-# means that the module is not built _unless_ it is declared as a build dependency by another enabled module (in which
-# case building this module is necessary for the dependant to be built).
+# Disabling a module means that any services, tasks and tests contained in it will not be build, deployed or run.
 #
 # If you disable the module, and its services, tasks or tests are referenced as _runtime_ dependencies, Garden will
 # automatically ignore those dependency declarations. Note however that template strings referencing the module's
@@ -96,8 +94,8 @@ disabled: false
 #
 # Note that you can also _exclude_ files using the `exclude` field or by placing `.gardenignore` files in your source
 # tree, which use the same format as `.gitignore` files. See the [Configuration Files
-# guide](https://docs.garden.io/using-garden/configuration-overview#including-excluding-files-and-directories) for
-# details.
+# guide](https://docs.garden.io/bonsai-0.13/using-garden/configuration-overview#including-excluding-files-and-directories)
+# for details.
 #
 # Also note that specifying an empty list here means _no sources_ should be included.
 include:
@@ -108,7 +106,8 @@ include:
 #
 # Note that you can also explicitly _include_ files using the `include` field. If you also specify the `include`
 # field, the files/patterns specified here are filtered from the files matched by `include`. See the [Configuration
-# Files guide](https://docs.garden.io/using-garden/configuration-overview#including-excluding-files-and-directories)
+# Files
+# guide](https://docs.garden.io/bonsai-0.13/using-garden/configuration-overview#including-excluding-files-and-directories)
 # for details.
 #
 # Unlike the `scan.exclude` field in the project config, the filters here have _no effect_ on which files and
@@ -201,6 +200,16 @@ version:
 
 # Use the specified Terraform workspace.
 workspace:
+
+# Configure the Terraform backend.
+#
+# The key-value pairs defined here are set as the `-backend-config` options when Garden
+# runs `terraform init`.
+#
+# This can be used to dynamically set a Terraform backend depending on the environment.
+#
+# If Garden sees that the backend has changes, it'll re-initialize Terraform and set the new values.
+backendConfig:
 ```
 
 ## Configuration Keys
@@ -347,7 +356,7 @@ A description of the module.
 
 Set this to `true` to disable the module. You can use this with conditional template strings to disable modules based on, for example, the current environment or other variables (e.g. `disabled: ${environment.name == "prod"}`). This can be handy when you only need certain modules for specific environments, e.g. only for development.
 
-Disabling a module means that any services, tasks and tests contained in it will not be deployed or run. It also means that the module is not built _unless_ it is declared as a build dependency by another enabled module (in which case building this module is necessary for the dependant to be built).
+Disabling a module means that any services, tasks and tests contained in it will not be build, deployed or run.
 
 If you disable the module, and its services, tasks or tests are referenced as _runtime_ dependencies, Garden will automatically ignore those dependency declarations. Note however that template strings referencing the module's service or task outputs (i.e. runtime outputs) will fail to resolve when the module is disabled, so you need to make sure to provide alternate values for those if you're using them, using conditional expressions.
 
@@ -359,7 +368,7 @@ If you disable the module, and its services, tasks or tests are referenced as _r
 
 Specify a list of POSIX-style paths or globs that should be regarded as the source files for this module. Files that do *not* match these paths or globs are excluded when computing the version of the module, when responding to filesystem watch events, and when staging builds.
 
-Note that you can also _exclude_ files using the `exclude` field or by placing `.gardenignore` files in your source tree, which use the same format as `.gitignore` files. See the [Configuration Files guide](https://docs.garden.io/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
+Note that you can also _exclude_ files using the `exclude` field or by placing `.gardenignore` files in your source tree, which use the same format as `.gitignore` files. See the [Configuration Files guide](https://docs.garden.io/bonsai-0.13/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
 
 Also note that specifying an empty list here means _no sources_ should be included.
 
@@ -379,7 +388,7 @@ include:
 
 Specify a list of POSIX-style paths or glob patterns that should be excluded from the module. Files that match these paths or globs are excluded when computing the version of the module, when responding to filesystem watch events, and when staging builds.
 
-Note that you can also explicitly _include_ files using the `include` field. If you also specify the `include` field, the files/patterns specified here are filtered from the files matched by `include`. See the [Configuration Files guide](https://docs.garden.io/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
+Note that you can also explicitly _include_ files using the `include` field. If you also specify the `include` field, the files/patterns specified here are filtered from the files matched by `include`. See the [Configuration Files guide](https://docs.garden.io/bonsai-0.13/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
 
 Unlike the `scan.exclude` field in the project config, the filters here have _no effect_ on which files and directories are watched for changes. Use the project `scan.exclude` field to affect those, if you have large directories that should not be watched for changes.
 
@@ -563,6 +572,29 @@ Use the specified Terraform workspace.
 | Type     | Required |
 | -------- | -------- |
 | `string` | No       |
+
+### `backendConfig`
+
+Configure the Terraform backend.
+
+The key-value pairs defined here are set as the `-backend-config` options when Garden
+runs `terraform init`.
+
+This can be used to dynamically set a Terraform backend depending on the environment.
+
+If Garden sees that the backend has changes, it'll re-initialize Terraform and set the new values.
+
+| Type     | Required |
+| -------- | -------- |
+| `object` | No       |
+
+Example:
+
+```yaml
+backendConfig:
+    bucket: ${environment.name}-bucket
+    key: tf-state/${local.username}/terraform.tfstate
+```
 
 
 ## Outputs

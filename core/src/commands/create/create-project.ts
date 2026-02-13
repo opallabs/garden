@@ -132,13 +132,12 @@ export class CreateProjectCommand extends Command<CreateProjectArgs, CreateProje
 
     if (opts.interactive && !opts.name) {
       const answer = await userPrompt({
-        name: "name",
         message: "Project name:",
         type: "input",
         default: name,
       })
 
-      name = answer.name
+      name = answer
 
       log.info("")
     }

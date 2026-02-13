@@ -44,11 +44,9 @@ A description of the action.
 
 By default, the directory where the action is defined is used as the source for the build context.
 
-You can override this by setting either `source.path` to another (POSIX-style) path relative to the action source directory, or `source.repository` to get the source from an external repository.
+You can override the directory that is used for the build context by setting `source.path`.
 
-If using `source.path`, you must make sure the target path is in a git repository.
-
-For `source.repository` behavior, please refer to the [Remote Sources guide](https://docs.garden.io/advanced/using-remote-sources).
+You can use `source.repository` to get the source from an external repository. For more information on remote actions, please refer to the [Remote Sources guide](https://docs.garden.io/bonsai-0.13/advanced/using-remote-sources).
 
 | Type     | Required |
 | -------- | -------- |
@@ -58,7 +56,11 @@ For `source.repository` behavior, please refer to the [Remote Sources guide](htt
 
 [source](#source) > path
 
-A relative POSIX-style path to the source directory for this action. You must make sure this path exists and is in a git repository!
+A relative POSIX-style path to the source directory for this action.
+
+If specified together with `source.repository`, the path will be relative to the repository root.
+
+Otherwise, the path will be relative to the directory containing the Garden configuration file.
 
 | Type        | Required |
 | ----------- | -------- |
@@ -274,7 +276,7 @@ Specify a list of POSIX-style paths or globs that should be included as the buil
 
 If nothing is specified here, the whole directory may be assumed to be included in the build. Providers are sometimes able to infer the list of paths, e.g. from a Dockerfile, but often this is inaccurate (say, if a Dockerfile has an `ADD .` statement) so it may be important to set `include` and/or `exclude` to define the build context. Otherwise you may find unrelated files being included in the build context and the build version, which may result in unnecessarily repeated builds.
 
-You can _exclude_ files using the `exclude` field or by placing `.gardenignore` files in your source tree, which use the same format as `.gitignore` files. See the [Configuration Files guide](https://docs.garden.io/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
+You can _exclude_ files using the `exclude` field or by placing `.gardenignore` files in your source tree, which use the same format as `.gitignore` files. See the [Configuration Files guide](https://docs.garden.io/bonsai-0.13/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
 
 | Type               | Required |
 | ------------------ | -------- |
@@ -455,6 +457,22 @@ The variables configured on the action.
 ### `${actions.build.<name>.outputs.log}`
 
 The full log output from the executed command. (Pro-tip: Make it machine readable so it can be parsed by dependants)
+
+| Type     | Default |
+| -------- | ------- |
+| `string` | `""`    |
+
+### `${actions.build.<name>.outputs.stdout}`
+
+The stdout log output from the executed command. (Pro-tip: Make it machine readable so it can be parsed by dependants)
+
+| Type     | Default |
+| -------- | ------- |
+| `string` | `""`    |
+
+### `${actions.build.<name>.outputs.stderr}`
+
+The stderr log output from the executed command. (Pro-tip: Make it machine readable so it can be parsed by dependants)
 
 | Type     | Default |
 | -------- | ------- |

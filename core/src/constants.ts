@@ -36,6 +36,13 @@ export const DEFAULT_PORT_PROTOCOL = "TCP"
 export enum GardenApiVersion {
   v0 = "garden.io/v0",
   v1 = "garden.io/v1",
+  v2 = "garden.io/v2",
+}
+
+export const supportedApiVersions: string[] = Object.values(GardenApiVersion).map((v) => v as string)
+
+export function gardenApiSupportsActions(apiVersion: GardenApiVersion): boolean {
+  return apiVersion !== GardenApiVersion.v0
 }
 
 export const DEFAULT_BUILD_TIMEOUT_SEC = 600
@@ -50,9 +57,10 @@ export const SUPPORTED_ARCHITECTURES: NodeJS.Architecture[] = ["x64", "arm64"]
 export const SEGMENT_DEV_API_KEY = "D3DUZ3lBSDO3krnuIO7eYDdtlDAjooKW" // ggignore
 export const SEGMENT_PROD_API_KEY = "b6ovUD9A0YjQqT3ZWetWUbuZ9OmGxKMa" // ggignore
 
-export const DOCS_BASE_URL = "https://docs.garden.io"
+export const DOCS_BASE_URL = "https://docs.garden.io/bonsai-0.13"
 
 export const DEFAULT_GARDEN_CLOUD_DOMAIN = "https://app.garden.io"
+export const DEFAULT_GROW_CLOUD_DOMAIN = "https://grow.staging.sys.garden"
 
 export const DEFAULT_BROWSER_DIVIDER_WIDTH = 80
 
@@ -64,26 +72,27 @@ export const IGNORE_UNCAUGHT_EXCEPTION_VARNAME = "GARDEN_IGNORE_UNCAUGHT_EXCEPTI
  * We set this up as a map to facilitate overriding values in tests.
  */
 export const gardenEnv = {
+  GARDEN_OFFLINE: env.get("GARDEN_OFFLINE").required(false).default("false").asBool(),
   ANALYTICS_DEV: env.get("ANALYTICS_DEV").required(false).asBool(),
   // Support the NO_COLOR env var (see https://no-color.org/)
   NO_COLOR: env.get("NO_COLOR").required(false).default("false").asBool(),
+  USE_GARDEN_CLOUD_V2: env.get("USE_GARDEN_CLOUD_V2").required(false).default("false").asBool(),
   GARDEN_AUTH_TOKEN: env.get("GARDEN_AUTH_TOKEN").required(false).asString(),
   GARDEN_CACHE_TTL: env.get("GARDEN_CACHE_TTL").required(false).asInt(),
   GARDEN_DB_DIR: env.get("GARDEN_DB_DIR").required(false).default(GARDEN_GLOBAL_PATH).asString(),
   GARDEN_DISABLE_ANALYTICS: env.get("GARDEN_DISABLE_ANALYTICS").required(false).asBool(),
   GARDEN_DISABLE_PORT_FORWARDS: env.get("GARDEN_DISABLE_PORT_FORWARDS").required(false).asBool(),
   GARDEN_DISABLE_VERSION_CHECK: env.get("GARDEN_DISABLE_VERSION_CHECK").required(false).asBool(),
-  GARDEN_DISABLE_WEB_APP_WARN: env.get("GARDEN_DISABLE_WEB_APP_WARN").required(false).default("false").asBool(),
   GARDEN_ENABLE_PROFILING: env.get("GARDEN_ENABLE_PROFILING").required(false).default("false").asBool(),
   GARDEN_ENVIRONMENT: env.get("GARDEN_ENVIRONMENT").required(false).asString(),
-  GARDEN_EXPERIMENTAL_BUILD_STAGE: env.get("GARDEN_EXPERIMENTAL_BUILD_STAGE").required(false).asBool(),
   GARDEN_GE_SCHEDULED: env.get("GARDEN_GE_SCHEDULED").required(false).asBool(),
   GARDEN_GIT_SCAN_MODE: env
     .get("GARDEN_GIT_SCAN_MODE")
     .required(false)
     .default(defaultGitScanMode)
     .asEnum(gitScanModes),
-  GARDEN_LEGACY_BUILD_STAGE: env.get("GARDEN_LEGACY_BUILD_STAGE").required(false).asBool(),
+  GARDEN_GIT_LOG_UNTRACKED_FILES: env.get("GARDEN_GIT_LOG_UNTRACKED_FILES").required(false).default("false").asBool(),
+  GARDEN_LEGACY_BUILD_STAGE: env.get("GARDEN_LEGACY_BUILD_STAGE").required(false).default("false").asBool(),
   GARDEN_LOG_LEVEL: env.get("GARDEN_LOG_LEVEL").required(false).asString(),
   GARDEN_LOGGER_TYPE: env.get("GARDEN_LOGGER_TYPE").required(false).asString(),
   GARDEN_PROXY_DEFAULT_ADDRESS: env.get("GARDEN_PROXY_DEFAULT_ADDRESS").required(false).asString(),
@@ -104,10 +113,11 @@ export const gardenEnv = {
     .required(false)
     .default("https://get.garden.io/releases")
     .asUrlString(),
-  GARDEN_ENABLE_NEW_SYNC: env.get("GARDEN_ENABLE_NEW_SYNC").required(false).default("true").asBool(),
-  // GARDEN_CLOUD_BUILDER will always override the config; That's why it doesn't have a default.
+  // GARDEN_CLOUD_BUILDER and GARDEN_CONTAINER_BUILDER will always override the config.
+  // That's why those don't have a default.
   // FIXME: If the environment variable is not set, asBool returns undefined, unlike the type suggests. That's why we cast to `boolean | undefined`.
   GARDEN_CLOUD_BUILDER: env.get("GARDEN_CLOUD_BUILDER").required(false).asBool() as boolean | undefined,
+  GARDEN_CONTAINER_BUILDER: env.get("GARDEN_CONTAINER_BUILDER").required(false).asBool() as boolean | undefined,
   GARDEN_ENABLE_PARTIAL_RESOLUTION: env.get("GARDEN_ENABLE_PARTIAL_RESOLUTION").required(false).asBool(),
   GARDEN_IGNORE_UNCAUGHT_EXCEPTION: env
     .get(IGNORE_UNCAUGHT_EXCEPTION_VARNAME)

@@ -13,6 +13,7 @@ import { dedent, naturalList } from "../../util/string.js"
 import type { CommandParams, CommandResult } from "../base.js"
 import { Command } from "../base.js"
 import { createActionLog } from "../../logger/log-entry.js"
+import { reportDeprecatedSyncCommandUsage } from "../../util/deprecations.js"
 
 const syncStopArgs = {
   names: new StringsParameter({
@@ -32,7 +33,7 @@ const syncStopOpts = {
 type Opts = typeof syncStopOpts
 
 export class SyncStopCommand extends Command<Args, Opts> {
-  name = "stop"
+  name = "stop" as const
   help = "Stop any active syncs to the given Deploy action(s)."
 
   override protected = true
@@ -57,8 +58,14 @@ export class SyncStopCommand extends Command<Args, Opts> {
     printHeader(log, "Stopping sync(s)", "🔁")
   }
 
-  async action(params: CommandParams<Args, Opts>): Promise<CommandResult<{}>> {
-    const { garden, log, args } = params
+  async action({ garden, log, args, parentCommand }: CommandParams<Args, Opts>): Promise<CommandResult<{}>> {
+    if (!parentCommand) {
+      reportDeprecatedSyncCommandUsage({
+        log,
+        deprecation: "syncStopCommand",
+        syncCommandName: this.name,
+      })
+    }
 
     // We default to stopping all syncs.
     const names = args.names || ["*"]
@@ -107,7 +114,7 @@ export class SyncStopCommand extends Command<Args, Opts> {
         await router.deploy.stopSync({ log: actionLog, action, graph })
 
         // Halt any active monitors for the sync
-        garden.monitors.find({ type: "sync", key: action.name }).map((m) => m.stop())
+        await Promise.all(garden.monitors.find({ type: "sync", key: action.name }).map((m) => m.stop()))
 
         actionLog.info("Syncing successfully stopped.")
       })

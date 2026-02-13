@@ -4,7 +4,7 @@ ARG VARIANT=root
 
 # NOTE: This is not the node version Garden itself will run in. Garden binaries have node "built in" and the version installed on the system does not matter.
 # The main reason we base these images off of the Node image is for Azure DevOps Support.
-FROM node:22.5.1-alpine3.19@sha256:17e6738cb7ac3d65860d51533372dad098c00d15bdfdb0b5f3897824eb9e11a5 as garden-base-root
+FROM node:24.7.0-alpine@sha256:be4d5e92ac68483ec71440bf5934865b4b7fcb93588f17a24d411d15f0204e4f as garden-base-root
 
 RUN apk add --no-cache \
   bash \
@@ -63,11 +63,10 @@ RUN GARDEN_DISABLE_ANALYTICS=true GARDEN_DISABLE_VERSION_CHECK=true garden util 
 
 WORKDIR /project
 
-# Apline-3.20 seems to have some issues, see https://github.com/aws/aws-cli/issues/8698#issuecomment-2135662844
-FROM python:3.11.9-alpine3.19@sha256:e6d5d64a497e85e3e0c7144fc209e0966165038c40314ba6b704476718bdf479 AS aws-builder
+FROM python:3.13.7-alpine3.22@sha256:9ba6d8cbebf0fb6546ae71f2a1c14f6ffd2fdab83af7fa5669734ef30ad48844 AS aws-builder
 
-ENV AWSCLI_VERSION=2.17.15
-ENV AWSCLI_SHA256="feab2d2afe0047385d5943b6e6dada6dc5304d334d1811528bde60f50e01557f"
+ENV AWSCLI_VERSION=2.27.30
+ENV AWSCLI_SHA256="bda85007d2d1dc5b76a1391165953c0ba4ccc9d3a61d25452b035a60fb4c7c27"
 
 RUN apk add --no-cache \
   wget \
@@ -101,9 +100,9 @@ COPY --chown=$USER:root --from=aws-builder /usr/bin/aws-iam-authenticator /usr/b
 #
 # gcloud base
 #
-FROM google/cloud-sdk:485.0.0-alpine@sha256:0986d2cc540558f949c2ec15e277f22c0c4d07faa98f65728955d0690fef4bce as gcloud-base
+FROM google/cloud-sdk:535.0.0-alpine@sha256:4e7d7701447dc001f022dbe3a920d0ab1776121eeb258d7c9710f08220f2973c as gcloud-base
 
-RUN gcloud components install kubectl gke-gcloud-auth-plugin --quiet
+RUN gcloud components install kubectl gke-gcloud-auth-plugin --quiet && gcloud components remove gsutil --quiet
 
 # Clean up bloat that increases layer size unnecessarily
 RUN rm -rf $(find /google-cloud-sdk/ -regex ".*/__pycache__") && rm -rf /google-cloud-sdk/.install/.backup
@@ -114,11 +113,11 @@ RUN rm -rf $(find /google-cloud-sdk/ -regex ".*/__pycache__") && rm -rf /google-
 FROM garden-base-root as garden-azure-base
 
 WORKDIR /
-ENV AZURE_CLI_VERSION=2.62.0
+ENV AZURE_CLI_VERSION=2.71.0
 
-RUN wget -O requirements.txt https://raw.githubusercontent.com/Azure/azure-cli/azure-cli-$AZURE_CLI_VERSION/src/azure-cli/requirements.py3.Linux.txt && \
-  echo "a156935b8b7df50b70bd1c0a20e6147a98cdfaac27e791bc46087f8206dde3ef  requirements.txt" | sha256sum -c
-RUN wget -O trim_sdk.py https://raw.githubusercontent.com/Azure/azure-cli/azure-cli-$AZURE_CLI_VERSION/scripts/trim_sdk.py && \
+RUN wget -O requirements.txt https://raw.githubusercontent.com/Azure/azure-cli/azure-cli-${AZURE_CLI_VERSION}/src/azure-cli/requirements.py3.Linux.txt && \
+  echo "236d6258134a9e880b9587a4bda636f0407cd36c2e518a6b2f91c1f24db3859b  requirements.txt" | sha256sum -c
+RUN wget -O trim_sdk.py https://raw.githubusercontent.com/Azure/azure-cli/azure-cli-${AZURE_CLI_VERSION}/scripts/trim_sdk.py && \
   echo "2e6292f5285b4fcedbe8efd77309fade550667d1c502a6ffa078f1aa97942c64  trim_sdk.py" | sha256sum -c
 
 RUN apk add py3-virtualenv openssl-dev libffi-dev build-base python3-dev

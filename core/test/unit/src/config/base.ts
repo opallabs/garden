@@ -10,7 +10,6 @@ import { expect } from "chai"
 import {
   loadConfigResources,
   findProjectConfig,
-  prepareModuleResource,
   prepareProjectResource,
   noTemplateFields,
   validateRawConfig,
@@ -18,15 +17,18 @@ import {
   loadAndValidateYaml,
 } from "../../../../src/config/base.js"
 import { resolve, join } from "path"
-import { expectError, getDataDir, getDefaultProjectConfig } from "../../../helpers.js"
+import { expectError, expectFuzzyMatch, getDataDir, getDefaultProjectConfig } from "../../../helpers.js"
 import { DEFAULT_BUILD_TIMEOUT_SEC, GardenApiVersion } from "../../../../src/constants.js"
 import { defaultDotIgnoreFile } from "../../../../src/util/fs.js"
 import { safeDumpYaml } from "../../../../src/util/serialization.js"
 import { getRootLogger } from "../../../../src/logger/logger.js"
-import { ConfigurationError } from "../../../../src/exceptions.js"
 import { resetNonRepeatableWarningHistory } from "../../../../src/warnings.js"
 import { omit } from "lodash-es"
 import { dedent } from "../../../../src/util/string.js"
+import { omitInternal } from "../../../../src/garden.js"
+import { serialiseUnresolvedTemplates } from "../../../../src/template/types.js"
+import stripAnsi from "strip-ansi"
+import { DOCS_DEPRECATION_GUIDE } from "../../../../src/util/deprecations.js"
 
 const projectPathA = getDataDir("test-project-a")
 const modulePathA = resolve(projectPathA, "module-a")
@@ -39,7 +41,6 @@ const projectPathMultipleProjects = getDataDir("test-project-multiple-project-co
 const logger = getRootLogger()
 const log = logger.createLog()
 
-// TODO-0.14: remove this describe block in 0.14
 describe("prepareProjectResource", () => {
   const projectResourceTemplate = {
     apiVersion: GardenApiVersion.v1,
@@ -117,16 +118,6 @@ describe("prepareProjectResource", () => {
     )
   })
 
-  it("should throw an error if the apiVersion is not known", async () => {
-    const projectResource = {
-      ...projectResourceTemplate,
-      apiVersion: "unknown",
-    }
-
-    const processConfigAction = () => prepareProjectResource(log, projectResource)
-    expect(processConfigAction).to.throw(ConfigurationError, /\`apiVersion: unknown\` is not supported/)
-  })
-
   it("should fall back to the previous apiVersion when not defined", async () => {
     const projectResource = {
       ...projectResourceTemplate,
@@ -142,8 +133,10 @@ describe("prepareProjectResource", () => {
     }
     expect(returnedProjectResource).to.eql(expectedProjectResource)
 
-    const logEntry = log.getLatestEntry()
-    expect(logEntry.msg).to.include(`"apiVersion" is missing in the Project config`)
+    const acornLogEntry = log.entries.slice(-2)[0]
+    expect(acornLogEntry.msg).to.include(`"apiVersion" is missing in the Project config`)
+    const cedarLogEntry = log.getLatestEntry()
+    expect(cedarLogEntry.msg).to.include(`Garden 0.14 will introduce breaking changes.`)
   })
 
   it("should log a warning if the apiVersion is garden.io/v0", async () => {
@@ -156,9 +149,44 @@ describe("prepareProjectResource", () => {
     expect(returnedProjectResource).to.eql(projectResource)
 
     const logEntry = log.getLatestEntry()
-    expect(logEntry.msg).to.include(
-      `Project is configured with \`apiVersion: ${GardenApiVersion.v0}\`, running with backwards compatibility.`
-    )
+    const sanitizedMsg = stripAnsi((logEntry.msg as string) || "")
+    const expectedMessages = [
+      "WARNING:",
+      `To make sure your configuration does not break when we release Garden 0.14, please follow the steps at ${DOCS_DEPRECATION_GUIDE}`,
+    ]
+    expectFuzzyMatch(sanitizedMsg, expectedMessages)
+  })
+  it("should log a warning if the apiVersion is garden.io/v1", async () => {
+    const projectResource = {
+      ...projectResourceTemplate,
+      apiVersion: GardenApiVersion.v1,
+    }
+
+    const returnedProjectResource = prepareProjectResource(log, projectResource)
+    expect(returnedProjectResource).to.eql(projectResource)
+
+    const logEntry = log.getLatestEntry()
+    const sanitizedMsg = stripAnsi((logEntry.msg as string) || "")
+    const expectedMessages = [
+      "WARNING:",
+      `To make sure your configuration does not break when we release Garden 0.14, please follow the steps at ${DOCS_DEPRECATION_GUIDE}`,
+    ]
+    expectFuzzyMatch(sanitizedMsg, expectedMessages)
+  })
+  it("should not log a warning if the apiVersion is garden.io/v2", async () => {
+    const projectResource = {
+      ...projectResourceTemplate,
+      apiVersion: GardenApiVersion.v2,
+    }
+
+    const latestBefore = log.getLatestEntry()
+    const returnedProjectResource = prepareProjectResource(log, projectResource)
+    const latestAfter = log.getLatestEntry()
+
+    expect(returnedProjectResource).to.eql(projectResource)
+
+    // Expect that we didn't print a warning
+    expect(latestBefore).to.equal(latestAfter)
   })
 })
 
@@ -256,11 +284,11 @@ describe("loadConfigResources", () => {
 
   it("should load and parse a module config", async () => {
     const configPath = resolve(modulePathA, "garden.yml")
-    const parsed = await loadConfigResources(log, projectPathA, configPath)
+    const configResources = await loadConfigResources(log, projectPathA, configPath)
+    expect(configResources.length).to.equal(1)
 
-    expect(parsed.length).to.equal(1)
-
-    expect(omit(parsed[0], "internal")).to.eql({
+    const configResource = serialiseUnresolvedTemplates(omitInternal(configResources[0]))
+    expect(configResource).to.eql({
       apiVersion: GardenApiVersion.v0,
       kind: "Module",
       name: "module-a",
@@ -317,11 +345,11 @@ describe("loadConfigResources", () => {
   it("should load and parse a module template", async () => {
     const projectPath = getDataDir("test-projects", "module-templates")
     const configFilePath = resolve(projectPath, "templates.garden.yml")
-    const parsed: any = await loadConfigResources(log, projectPath, configFilePath)
+    const configResources = await loadConfigResources(log, projectPath, configFilePath)
+    expect(configResources.length).to.equal(1)
 
-    expect(parsed.length).to.equal(1)
-
-    expect(omit(parsed[0], "internal")).to.eql({
+    const configResource = serialiseUnresolvedTemplates(omitInternal(configResources[0]))
+    expect(configResource).to.eql({
       kind: configTemplateKind,
       name: "combo",
 
@@ -453,7 +481,7 @@ describe("loadConfigResources", () => {
         exclude: undefined,
         repositoryUrl: undefined,
         build: {
-          dependencies: [{ name: "module-from-project-config", copy: [] }],
+          dependencies: ["module-from-project-config"],
           timeout: DEFAULT_BUILD_TIMEOUT_SEC,
         },
         local: undefined,
@@ -462,7 +490,7 @@ describe("loadConfigResources", () => {
         spec: {
           build: {
             command: ["echo", "A1"],
-            dependencies: [{ name: "module-from-project-config", copy: [] }],
+            dependencies: ["module-from-project-config"],
           },
           services: [{ name: "service-a1" }],
           tests: [{ name: "unit", command: ["echo", "OK"] }],
@@ -547,19 +575,6 @@ describe("loadConfigResources", () => {
   })
 })
 
-describe("prepareModuleResource", () => {
-  it("should normalize build dependencies", async () => {
-    const moduleConfigPath = resolve(modulePathA, "garden.yml")
-    const parsed: any = (await loadConfigResources(log, projectPathA, moduleConfigPath))[0]
-    parsed.build!.dependencies = [{ name: "apple" }, "banana", null]
-    const prepared = prepareModuleResource(parsed, moduleConfigPath, projectPathA)
-    expect(prepared.build!.dependencies).to.eql([
-      { name: "apple", copy: [] },
-      { name: "banana", copy: [] },
-    ])
-  })
-})
-
 describe("findProjectConfig", async () => {
   const customConfigPath = getDataDir("test-projects", "custom-config-names")
 
@@ -608,7 +623,11 @@ describe("loadAndValidateYaml", () => {
       name: foo
     `
 
-    const yamlDocs = await loadAndValidateYaml(yaml, "foo.yaml in directory bar")
+    const yamlDocs = await loadAndValidateYaml({
+      content: yaml,
+      sourceDescription: "foo.yaml in directory bar",
+      filename: "bar/foo.yaml",
+    })
 
     expect(yamlDocs).to.have.length(1)
     expect(yamlDocs[0].source).to.equal(yaml)
@@ -631,7 +650,11 @@ describe("loadAndValidateYaml", () => {
       name: doc3
     `
 
-    const yamlDocs = await loadAndValidateYaml(yaml, "foo.yaml in directory bar")
+    const yamlDocs = await loadAndValidateYaml({
+      content: yaml,
+      sourceDescription: "foo.yaml in directory bar",
+      filename: "bar/foo.yaml",
+    })
 
     expect(yamlDocs).to.have.length(3)
 
@@ -660,7 +683,11 @@ describe("loadAndValidateYaml", () => {
       newYamlOctalNumber: 0o777
     `
 
-    const yamlDocs = await loadAndValidateYaml(yaml, "foo.yaml in directory bar")
+    const yamlDocs = await loadAndValidateYaml({
+      content: yaml,
+      sourceDescription: "foo.yaml in directory bar",
+      filename: "bar/foo.yaml",
+    })
 
     expect(yamlDocs).to.have.length(1)
     expect(yamlDocs[0].source).to.equal(yaml)
@@ -682,7 +709,11 @@ describe("loadAndValidateYaml", () => {
       newYamlOctalNumber: 0o777
     `
 
-    const yamlDocs = await loadAndValidateYaml(yaml, "foo.yaml in directory bar")
+    const yamlDocs = await loadAndValidateYaml({
+      content: yaml,
+      sourceDescription: "foo.yaml in directory bar",
+      filename: "bar/foo.yaml",
+    })
 
     expect(yamlDocs).to.have.length(1)
     expect(yamlDocs[0].source).to.equal(yaml)
@@ -702,7 +733,12 @@ describe("loadAndValidateYaml", () => {
     `
 
     // we use the version parameter to force the yaml 1.1 standard
-    const yamlDocs = await loadAndValidateYaml(yaml, "foo.yaml in directory bar", "1.1")
+    const yamlDocs = await loadAndValidateYaml({
+      content: yaml,
+      sourceDescription: "foo.yaml in directory bar",
+      filename: "bar/foo.yaml",
+      version: "1.1",
+    })
 
     expect(yamlDocs).to.have.length(1)
     expect(yamlDocs[0].source).to.equal(yaml)
@@ -718,7 +754,12 @@ describe("loadAndValidateYaml", () => {
     `
 
     await expectError(
-      () => loadAndValidateYaml(yaml, "foo.yaml in directory bar"),
+      () =>
+        loadAndValidateYaml({
+          content: yaml,
+          sourceDescription: "foo.yaml in directory bar",
+          filename: "bar/foo.yaml",
+        }),
       (err) => {
         expect(err.message).to.eql(dedent`
           Could not parse foo.yaml in directory bar as valid YAML: YAMLException: unidentified alias "bar" (1:10)

@@ -23,11 +23,12 @@ import { keyBy } from "lodash-es"
 import { getContainerTestGarden } from "./container.js"
 import { DeployTask } from "../../../../../../src/tasks/deploy.js"
 import type { TestGarden } from "../../../../../helpers.js"
-import { expectError, findNamespaceStatusEvent, grouped } from "../../../../../helpers.js"
+import { expectError, findNamespaceStatusEvent } from "../../../../../helpers.js"
 import { kilobytesToString, millicpuToString } from "../../../../../../src/plugins/kubernetes/util.js"
 import { getDeployedImageId, getResourceRequirements } from "../../../../../../src/plugins/kubernetes/container/util.js"
 import { isConfiguredForSyncMode } from "../../../../../../src/plugins/kubernetes/status/status.js"
 import type {
+  ContainerBuildAction,
   ContainerDeployAction,
   ContainerDeployActionConfig,
   ContainerDeployOutputs,
@@ -36,8 +37,9 @@ import { apply } from "../../../../../../src/plugins/kubernetes/kubectl.js"
 import { getAppNamespace } from "../../../../../../src/plugins/kubernetes/namespace.js"
 import { gardenAnnotationKey } from "../../../../../../src/util/string.js"
 import {
-  getK8sSyncUtilImageName,
-  k8sReverseProxyImageName,
+  defaultUtilImageRegistryDomain,
+  getK8sReverseProxyImagePath,
+  getK8sSyncUtilImagePath,
   k8sSyncUtilContainerName,
   PROXY_CONTAINER_SSH_TUNNEL_PORT,
   PROXY_CONTAINER_SSH_TUNNEL_PORT_NAME,
@@ -65,6 +67,11 @@ describe("kubernetes container deployment handlers", () => {
   let ctx: KubernetesPluginContext
   let provider: KubernetesProvider
   let api: KubeApi
+
+  async function resolveBuildAction(name: string) {
+    graph = await garden.getConfigGraph({ log: garden.log, emit: false })
+    return garden.resolveAction<ContainerBuildAction>({ action: graph.getBuild(name), log: garden.log, graph })
+  }
 
   async function resolveDeployAction(name: string, mode: ActionMode = "default") {
     if (mode !== "default") {
@@ -122,7 +129,7 @@ describe("kubernetes container deployment handlers", () => {
 
     function expectProxyContainerImage(workload: KubernetesWorkload) {
       const appContainerSpec = workload.spec.template?.spec?.containers.find((c) => c.name === "local-mode")
-      expect(appContainerSpec!.image).to.eql(k8sReverseProxyImageName)
+      expect(appContainerSpec!.image).to.eql(getK8sReverseProxyImagePath(defaultUtilImageRegistryDomain))
     }
 
     function expectContainerEnvVars(workload: KubernetesWorkload) {
@@ -201,6 +208,53 @@ describe("kubernetes container deployment handlers", () => {
         })
 
         expectNoProbes(workload)
+      })
+    })
+
+    context("localMode with utilImageRegistryDomain set to a custom registry", () => {
+      const environmentName = "local"
+      let gardenCustomDomain: TestGarden
+      let cleanupCustomDomain: (() => void) | undefined
+      let ctxCustomDomain: KubernetesPluginContext
+      let providerCustomDomain: KubernetesProvider
+      let apiCustomDomain: KubeApi
+
+      before(async () => {
+        const res = await getContainerTestGarden(environmentName)
+        gardenCustomDomain = res.garden
+        cleanup = res.cleanup
+        providerCustomDomain = <KubernetesProvider>(
+          await gardenCustomDomain.resolveProvider({ log: garden.log, name: "local-kubernetes" })
+        )
+        providerCustomDomain.config["utilImageRegistryDomain"] = "https://my-custom-registry-mirror.io"
+
+        ctxCustomDomain = <KubernetesPluginContext>await garden.getPluginContext({
+          provider: {
+            ...providerCustomDomain,
+          },
+          templateContext: undefined,
+          events: undefined,
+        })
+        apiCustomDomain = await KubeApi.factory(garden.log, ctx, provider)
+      })
+
+      it("should have proxy container image using custom container registry", async () => {
+        const action = await resolveDeployAction("local-mode", "local") // <----
+
+        const { workload } = await createContainerManifests({
+          ctx: ctxCustomDomain,
+          api: apiCustomDomain,
+          action,
+          log: createActionLog({ log: gardenCustomDomain.log, actionName: action.name, actionKind: action.kind }),
+          imageId: getDeployedImageId(action),
+        })
+
+        const appContainerSpec = workload.spec.template?.spec?.containers.find((c) => c.name === "local-mode")
+        expect(appContainerSpec!.image).to.eql(getK8sReverseProxyImagePath("https://my-custom-registry-mirror.io"))
+      })
+
+      after(() => {
+        cleanupCustomDomain && cleanupCustomDomain()
       })
     })
 
@@ -452,7 +506,7 @@ describe("kubernetes container deployment handlers", () => {
       expect(resource.spec.template?.spec?.initContainers).to.eql([
         {
           name: k8sSyncUtilContainerName,
-          image: getK8sSyncUtilImageName(),
+          image: getK8sSyncUtilImagePath(provider.config.utilImageRegistryDomain),
           command: ["/bin/sh", "-c", "'cp' '/usr/local/bin/mutagen-agent' '/.garden/mutagen-agent'"],
           imagePullPolicy: "IfNotPresent",
           volumeMounts: [
@@ -661,27 +715,30 @@ describe("kubernetes container deployment handlers", () => {
       })
 
       it("should deploy a simple Deploy", async () => {
-        const action = await resolveDeployAction("simple-service")
+        const buildAction = await resolveBuildAction("simple-service")
+        const serviceAction = await resolveDeployAction("simple-service")
 
         const deployTask = new DeployTask({
           garden,
           graph,
           log: garden.log,
-          action,
+          action: serviceAction,
           force: true,
           forceBuild: false,
         })
 
         garden.events.eventLog = []
-        const results = await garden.processTasks({ tasks: [deployTask], log: garden.log, throwOnError: true })
+        const results = await garden.processTasks({ tasks: [deployTask], throwOnError: true })
         const statuses = getDeployStatuses(results.results)
-        const status = statuses[action.name]
+        const status = statuses[serviceAction.name]
         const resources = keyBy(status.detail?.detail["remoteResources"], "kind")
 
         expect(findNamespaceStatusEvent(garden.events.eventLog, "container-default")).to.exist
-        expect(resources.Deployment.metadata.annotations["garden.io/version"]).to.equal(`${action.versionString()}`)
+        expect(resources.Deployment.metadata.annotations["garden.io/version"]).to.equal(
+          `${serviceAction.versionString()}`
+        )
         expect(resources.Deployment.spec.template.spec.containers[0].image).to.equal(
-          `${action.name}:${action.getBuildAction()?.versionString()}`
+          `${serviceAction.name}:${buildAction.versionString()}`
         )
       })
 
@@ -741,7 +798,7 @@ describe("kubernetes container deployment handlers", () => {
           forceBuild: false,
         })
 
-        await garden.processTasks({ tasks: [deployTask], log: garden.log, throwOnError: true })
+        await garden.processTasks({ tasks: [deployTask], throwOnError: true })
 
         // We expect this `ConfigMap` to still exist.
         await api.core.readNamespacedConfigMap({ name: mapToNotPruneKey, namespace })
@@ -778,7 +835,7 @@ describe("kubernetes container deployment handlers", () => {
           forceBuild: false,
         })
 
-        const results = await garden.processTasks({ tasks: [deployTask], log: garden.log, throwOnError: true })
+        const results = await garden.processTasks({ tasks: [deployTask], throwOnError: true })
         const statuses = getDeployStatuses(results.results)
         const status = statuses[action.name]
         expect(status.state).to.eql("ready")
@@ -796,7 +853,7 @@ describe("kubernetes container deployment handlers", () => {
           forceBuild: false,
         })
 
-        const results = await garden.processTasks({ tasks: [deployTask], log: garden.log, throwOnError: true })
+        const results = await garden.processTasks({ tasks: [deployTask], throwOnError: true })
         const statuses = getDeployStatuses(results.results)
         const status = statuses[action.name]
         const resources = keyBy(status.detail?.detail["remoteResources"], "kind")
@@ -808,89 +865,6 @@ describe("kubernetes container deployment handlers", () => {
         expect(resources.Deployment.spec.template.spec.containers[0].volumeMounts).to.eql([
           { name: "test", mountPath: "/volume" },
         ])
-      })
-    })
-
-    grouped("kaniko", "remote-only").context("kaniko", () => {
-      before(async () => {
-        await init("kaniko", true)
-      })
-
-      after(async () => {
-        if (cleanup) {
-          cleanup()
-        }
-      })
-
-      const processDeployAction = async (
-        resolvedAction: ResolvedDeployAction<ContainerDeployActionConfig, ContainerDeployOutputs, any>
-      ) => {
-        const deployTask = new DeployTask({
-          garden,
-          graph,
-          log: garden.log,
-          action: resolvedAction,
-          force: true,
-          forceBuild: false,
-        })
-
-        const results = await garden.processTasks({ tasks: [deployTask], log: garden.log, throwOnError: true })
-        const statuses = getDeployStatuses(results.results)
-
-        return statuses[resolvedAction.name]
-      }
-
-      it.skip("should deploy a simple service without dockerfile", async () => {
-        const action = await resolveDeployAction("simple-server-busybox")
-        const status = await processDeployAction(action)
-
-        const resources = keyBy(status.detail?.detail["remoteResources"], "kind")
-
-        // Note: the image version should match the image in the module not the
-        // deploy action version
-        expect(resources.Deployment.spec.template.spec.containers[0].image).to.equal(`busybox:1.31.1`)
-      })
-
-      it.skip("should deploy a simple service without image", async () => {
-        const action = await resolveDeployAction("remote-registry-test")
-        const status = await processDeployAction(action)
-
-        const resources = keyBy(status.detail?.detail["remoteResources"], "kind")
-        const buildVersionString = action.getBuildAction()?.versionString()
-
-        // Note: the image version should match the build action version and not the
-        // deploy action version
-        expect(resources.Deployment.spec.template.spec.containers[0].image).to.equal(
-          `europe-west3-docker.pkg.dev/garden-ci/garden-integ-tests/${action.name}:${buildVersionString}`
-        )
-      })
-
-      it.skip("should deploy a simple service with absolute image path", async () => {
-        const action = await resolveDeployAction("remote-registry-test-absolute-image")
-        const status = await processDeployAction(action)
-
-        const resources = keyBy(status.detail?.detail["remoteResources"], "kind")
-        const buildVersionString = action.getBuildAction()?.versionString()
-
-        // Note: the image version should match the build action version and not the
-        // deploy action version
-        expect(resources.Deployment.spec.template.spec.containers[0].image).to.equal(
-          `europe-west3-docker.pkg.dev/garden-ci/garden-integ-tests/${action.name}:${buildVersionString}`
-        )
-      })
-
-      it.skip("should deploy a simple service with relative image path", async () => {
-        const action = await resolveDeployAction("remote-registry-test-relative-image")
-        const status = await processDeployAction(action)
-
-        const resources = keyBy(status.detail?.detail["remoteResources"], "kind")
-        const buildVersionString = action.getBuildAction()?.versionString()
-
-        // Note: the image version should match the build action version and not the
-        // deploy action version
-        expect(resources.Deployment.spec.template.spec.containers[0].image).to.equal(
-          `europe-west3-docker.pkg.dev/garden-ci/garden-integ-tests/${action.name}:${buildVersionString}`
-        )
       })
     })
   })
@@ -928,7 +902,7 @@ describe("kubernetes container deployment handlers", () => {
           forceBuild: false,
         })
 
-        await garden.processTasks({ tasks: [deployTask], log: garden.log, throwOnError: true })
+        await garden.processTasks({ tasks: [deployTask], throwOnError: true })
 
         // Important: This is a fresh config graoh with no action modes set, as would be the case e.g. when
         // calling the `get status` command. This is to test that we're indeed using the action mode written in the

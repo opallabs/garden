@@ -58,7 +58,7 @@ import { isConfiguredForSyncMode } from "./status/status.js"
 import type { PluginContext } from "../../plugin-context.js"
 import type { SyncConfig, SyncSession } from "../../mutagen.js"
 import { haltedStatuses, Mutagen, mutagenAgentPath, mutagenStatusDescriptions } from "../../mutagen.js"
-import { getK8sSyncUtilImageName, k8sSyncUtilContainerName, syncGuideLink } from "./constants.js"
+import { getK8sSyncUtilImagePath, k8sSyncUtilContainerName, syncGuideLink } from "./constants.js"
 import { isAbsolute, relative, resolve } from "path"
 import type { Resolved } from "../../actions/types.js"
 import { joinWithPosix } from "../../util/fs.js"
@@ -68,10 +68,10 @@ import { convertServiceResource } from "./kubernetes-type/common.js"
 import { prepareConnectionOpts } from "./kubectl.js"
 import type { GetSyncStatusResult, SyncState, SyncStatus } from "../../plugin/handlers/Deploy/get-sync-status.js"
 import { ConfigurationError } from "../../exceptions.js"
-import { gardenEnv } from "../../constants.js"
 import { styles } from "../../logger/styles.js"
 import { commandListToShellScript } from "../../util/escape.js"
 import { toClearText } from "../../util/secrets.js"
+import type { V1Container } from "@kubernetes/client-node"
 
 export const builtInExcludes = ["/**/*.git", "**/*.garden"]
 
@@ -176,8 +176,11 @@ const syncModeOverrideSpec = () =>
     target: targetResourceSpecSchema().description(
       "The Kubernetes resources to override. If specified, this is used instead of `spec.defaultTarget`."
     ),
-    command: joi.array().items(joi.string()).description("Override the command/entrypoint in the matched container."),
-    args: joi.array().items(joi.string()).description("Override the args in the matched container."),
+    command: joi
+      .sparseArray()
+      .items(joi.string())
+      .description("Override the command/entrypoint in the matched container."),
+    args: joi.sparseArray().items(joi.string()).description("Override the args in the matched container."),
     image: joi.string().description("Override the image of the matched container."),
   })
 
@@ -302,7 +305,7 @@ export async function configureSyncMode({
   spec,
 }: {
   ctx: PluginContext
-  log: Log
+  log: ActionLog
   provider: KubernetesProvider
   action: Resolved<SyncableRuntimeAction>
   defaultTarget: KubernetesTargetResourceSpec | undefined
@@ -334,7 +337,7 @@ export async function configureSyncMode({
           Override configuration:
           ${(override.command?.length ?? 0) > 0 ? `Command: ${override.command?.join(" ")}` : ""}
           ${(override.args?.length ?? 0) > 0 ? `Args: ${override.args?.join(" ")}` : ""}
-          ${override.image?.length ?? 0 ? `Image: ${override.image}` : ""}
+          ${(override.image?.length ?? 0) ? `Image: ${override.image}` : ""}
         `,
       })
     }
@@ -460,9 +463,14 @@ export async function configureSyncMode({
     if (!podSpec.initContainers) {
       podSpec.initContainers = []
     }
-    const k8sSyncUtilImageName = getK8sSyncUtilImageName()
+
+    if (!podSpec.imagePullSecrets) {
+      podSpec.imagePullSecrets = []
+    }
+
+    const k8sSyncUtilImageName = getK8sSyncUtilImagePath(provider.config.utilImageRegistryDomain)
     if (!podSpec.initContainers.find((c) => c.image === k8sSyncUtilImageName)) {
-      const initContainer = {
+      const initContainer: V1Container = {
         name: k8sSyncUtilContainerName,
         image: k8sSyncUtilImageName,
         command: [
@@ -475,6 +483,8 @@ export async function configureSyncMode({
         volumeMounts: [gardenVolumeMount],
       }
       podSpec.initContainers.push(initContainer)
+
+      podSpec.imagePullSecrets.push(...provider.config.imagePullSecrets.map((s) => ({ name: s.name })))
     }
 
     if (!targetContainer.volumeMounts) {
@@ -977,48 +987,7 @@ export function makeSyncConfig({
   }
 }
 
-async function getKubectlExecDestinationLegacy({
-  ctx,
-  log,
-  namespace,
-  containerName,
-  resourceName,
-  targetPath,
-}: {
-  ctx: KubernetesPluginContext
-  log: Log
-  namespace: string
-  containerName: string
-  resourceName: string
-  targetPath: string
-}) {
-  const kubectl = ctx.tools["kubernetes.kubectl"]
-  const kubectlPath = await kubectl.ensurePath(log)
-
-  const connectionOpts = prepareConnectionOpts({
-    provider: ctx.provider,
-    namespace,
-  })
-
-  const command = [
-    kubectlPath,
-    "exec",
-    "-i",
-    ...connectionOpts,
-    "--container",
-    containerName,
-    resourceName,
-    "--",
-    mutagenAgentPath,
-    "synchronizer",
-  ]
-
-  log.debug("Using legacy Mutagen (Garden fork)")
-
-  return `exec:'${command.join(" ")}':${targetPath}`
-}
-
-async function getKubectlExecDestinationNative({
+export async function getKubectlExecDestination({
   ctx,
   log,
   namespace,
@@ -1065,9 +1034,5 @@ async function getKubectlExecDestinationNative({
 
   return `${hostname}:${targetPath}`
 }
-
-export const getKubectlExecDestination = gardenEnv.GARDEN_ENABLE_NEW_SYNC
-  ? getKubectlExecDestinationNative
-  : getKubectlExecDestinationLegacy
 
 const isReverseMode = (mode: string) => mode === "one-way-reverse" || mode === "one-way-replica-reverse"

@@ -19,8 +19,14 @@ import {
   DEFAULT_DEPLOY_TIMEOUT_SEC,
   DEFAULT_RUN_TIMEOUT_SEC,
   DEFAULT_TEST_TIMEOUT_SEC,
+  GardenApiVersion,
 } from "../../../../src/constants.js"
 import { getRemoteSourceLocalPath } from "../../../../src/util/ext-source-util.js"
+import { clearVarfileCache } from "../../../../src/config/base.js"
+import { parseTemplateCollection } from "../../../../src/template/templated-collections.js"
+import { deepResolveContext } from "../../../../src/config/template-contexts/base.js"
+import { setGlobalProjectApiVersion } from "../../../../src/project-api-version.js"
+import type { ActionDependencyAttributes } from "../../../../src/actions/types.js"
 
 describe("actionConfigsToGraph", () => {
   let tmpDir: TempDirectory
@@ -32,6 +38,11 @@ describe("actionConfigsToGraph", () => {
     tmpDir = result.tmpDir
     garden = result.garden
     log = garden.log
+  })
+
+  afterEach(() => {
+    // Some tests re-use and re-write existing varfiles, so we need to clear the cache explicitly.
+    clearVarfileCache()
   })
 
   it("resolves a Build action", async () => {
@@ -237,6 +248,7 @@ describe("actionConfigsToGraph", () => {
         explicit: true,
         kind: "Build",
         name: "foo",
+        type: "test",
         needsExecutedOutputs: false,
         needsStaticOutputs: false,
       },
@@ -283,6 +295,7 @@ describe("actionConfigsToGraph", () => {
       {
         explicit: true,
         kind: "Build",
+        type: "test",
         name: "foo",
         needsExecutedOutputs: false,
         needsStaticOutputs: false,
@@ -295,30 +308,35 @@ describe("actionConfigsToGraph", () => {
       garden,
       log,
       groupConfigs: [],
-      configs: [
-        {
-          kind: "Build",
-          type: "test",
-          name: "foo",
-          timeout: DEFAULT_BUILD_TIMEOUT_SEC,
-          internal: {
-            basePath: tmpDir.path,
+      configs: parseTemplateCollection({
+        value: [
+          {
+            kind: "Build",
+            type: "test",
+            name: "foo",
+            timeout: DEFAULT_BUILD_TIMEOUT_SEC,
+            internal: {
+              basePath: tmpDir.path,
+            },
+            spec: {},
           },
-          spec: {},
+          {
+            kind: "Build",
+            type: "test",
+            name: "bar",
+            timeout: DEFAULT_BUILD_TIMEOUT_SEC,
+            internal: {
+              basePath: tmpDir.path,
+            },
+            spec: {
+              command: ["echo", "${actions.build.foo.version}"],
+            },
+          },
+        ] as const,
+        source: {
+          path: [],
         },
-        {
-          kind: "Build",
-          type: "test",
-          name: "bar",
-          timeout: DEFAULT_BUILD_TIMEOUT_SEC,
-          internal: {
-            basePath: tmpDir.path,
-          },
-          spec: {
-            command: ["echo", "${actions.build.foo.version}"],
-          },
-        },
-      ],
+      }),
       moduleGraph: new ModuleGraph({ modules: [], moduleTypes: {} }),
       actionModes: {},
       linkedSources: {},
@@ -331,110 +349,88 @@ describe("actionConfigsToGraph", () => {
       {
         explicit: false,
         kind: "Build",
+        type: "test",
         name: "foo",
-        fullRef: ["actions", "build", "foo", "version"],
         needsExecutedOutputs: false,
         needsStaticOutputs: true,
       },
     ])
   })
 
-  it("flags implicit dependency as needing execution if a non-static output is referenced", async () => {
-    const graph = await actionConfigsToGraph({
-      garden,
-      log,
-      groupConfigs: [],
-      configs: [
+  describe("when implicit dependency is references via non-static output", () => {
+    async function assertDependencyAttributes(attrs: ActionDependencyAttributes) {
+      const graph = await actionConfigsToGraph({
+        garden,
+        log,
+        groupConfigs: [],
+        configs: parseTemplateCollection({
+          value: [
+            {
+              kind: "Build",
+              type: "test",
+              name: "foo",
+              timeout: DEFAULT_BUILD_TIMEOUT_SEC,
+              internal: {
+                basePath: tmpDir.path,
+              },
+              spec: {},
+            },
+            {
+              kind: "Build",
+              type: "test",
+              name: "bar",
+              timeout: DEFAULT_BUILD_TIMEOUT_SEC,
+              internal: {
+                basePath: tmpDir.path,
+              },
+              spec: {
+                command: ["echo", "${actions.build.foo.outputs.bar}"],
+              },
+            },
+          ] as const,
+          source: { path: [] },
+        }),
+        moduleGraph: new ModuleGraph({ modules: [], moduleTypes: {} }),
+        actionModes: {},
+        linkedSources: {},
+      })
+
+      const action = graph.getBuild("bar")
+      const deps = action.getDependencyReferences()
+
+      expect(deps).to.eql([
         {
           kind: "Build",
           type: "test",
           name: "foo",
-          timeout: DEFAULT_BUILD_TIMEOUT_SEC,
-          internal: {
-            basePath: tmpDir.path,
-          },
-          spec: {},
+          ...attrs,
         },
-        {
-          kind: "Build",
-          type: "test",
-          name: "bar",
-          timeout: DEFAULT_BUILD_TIMEOUT_SEC,
-          internal: {
-            basePath: tmpDir.path,
-          },
-          spec: {
-            command: ["echo", "${actions.build.foo.outputs.bar}"],
-          },
-        },
-      ],
-      moduleGraph: new ModuleGraph({ modules: [], moduleTypes: {} }),
-      actionModes: {},
-      linkedSources: {},
+      ])
+    }
+
+    context("with apiVersion: garden.io/v2", () => {
+      beforeEach(() => {
+        setGlobalProjectApiVersion(GardenApiVersion.v2)
+      })
+
+      it("flags implicit dependency as needing execution and explicit if a non-static output is referenced", async () => {
+        await assertDependencyAttributes({
+          explicit: true, // <--- referenced builds are treated as if they were explicit dependencies
+          needsExecutedOutputs: true,
+          needsStaticOutputs: false,
+        })
+      })
     })
 
-    const action = graph.getBuild("bar")
-    const deps = action.getDependencyReferences()
-
-    expect(deps).to.eql([
-      {
-        explicit: false,
-        kind: "Build",
-        name: "foo",
-        fullRef: ["actions", "build", "foo", "outputs", "bar"],
-        needsExecutedOutputs: true,
-        needsStaticOutputs: false,
-      },
-    ])
-  })
-
-  it("does not mark an implicit dependency needing execution if a static output of dependency is referenced", async () => {
-    const graph = await actionConfigsToGraph({
-      garden,
-      log,
-      groupConfigs: [],
-      configs: [
-        {
-          kind: "Build",
-          type: "container",
-          name: "foo",
-          timeout: DEFAULT_BUILD_TIMEOUT_SEC,
-          internal: {
-            basePath: tmpDir.path,
-          },
-          spec: {},
-        },
-        {
-          kind: "Deploy",
-          type: "test",
-          name: "bar",
-          timeout: DEFAULT_BUILD_TIMEOUT_SEC,
-          internal: {
-            basePath: tmpDir.path,
-          },
-          spec: {
-            command: ["echo", "${actions.build.foo.outputs.deploymentImageName}"],
-          },
-        },
-      ],
-      moduleGraph: new ModuleGraph({ modules: [], moduleTypes: {} }),
-      actionModes: {},
-      linkedSources: {},
+    context("with apiVersion: garden.io/v1", () => {
+      it("flags implicit dependency as needing execution if a non-static output is referenced", async () => {
+        await assertDependencyAttributes({
+          explicit: false, // <--- referenced builds are still treated as implicit dependencies
+          needsExecutedOutputs: true,
+          needsStaticOutputs: false,
+        })
+      })
     })
-
-    const action = graph.getDeploy("bar")
-    const deps = action.getDependencyReferences()
-
-    expect(deps).to.eql([
-      {
-        explicit: false,
-        kind: "Build",
-        name: "foo",
-        fullRef: ["actions", "build", "foo", "outputs", "deploymentImageName"],
-        needsExecutedOutputs: false,
-        needsStaticOutputs: true,
-      },
-    ])
   })
 
   it("correctly sets compatibleTypes for an action type with no base", async () => {
@@ -497,33 +493,39 @@ describe("actionConfigsToGraph", () => {
       garden,
       log,
       groupConfigs: [],
-      configs: [
-        {
-          kind: "Build",
-          type: "test",
-          name: "foo",
-          timeout: DEFAULT_BUILD_TIMEOUT_SEC,
-          variables: {
-            projectName: "${project.name}",
+      configs: parseTemplateCollection({
+        value: [
+          {
+            kind: "Build",
+            type: "test",
+            name: "foo",
+            timeout: DEFAULT_BUILD_TIMEOUT_SEC,
+            variables: {
+              projectName: "${project.name}" as string,
+            },
+            internal: {
+              basePath: tmpDir.path,
+            },
+            spec: {},
           },
-          internal: {
-            basePath: tmpDir.path,
-          },
-          spec: {},
-        },
-      ],
+        ] as const,
+        source: { path: [] },
+      }),
       moduleGraph: new ModuleGraph({ modules: [], moduleTypes: {} }),
       actionModes: {},
       linkedSources: {},
     })
 
     const action = graph.getBuild("foo")
-    const vars = action["variables"]
+    const varContext = action.getVariablesContext()
+    const resolved = deepResolveContext("action variables", varContext, garden.getProjectConfigContext())
 
-    expect(vars).to.eql({ projectName: garden.projectName })
+    expect(resolved).to.eql({
+      projectName: garden.projectName,
+    })
   })
 
-  it("loads varfiles for the action", async () => {
+  it("loads varfiles for the action and resolve template strings in varfile", async () => {
     const varfilePath = join(tmpDir.path, "varfile.yml")
     await dumpYaml(varfilePath, {
       projectName: "${project.name}",
@@ -552,12 +554,19 @@ describe("actionConfigsToGraph", () => {
     })
 
     const action = graph.getBuild("foo")
-    const vars = action["variables"]
+    const varContext = action.getVariablesContext()
 
-    expect(vars).to.eql({ projectName: "${project.name}" })
+    expect(
+      varContext.resolve({ nodePath: [], key: [], opts: {}, rootContext: garden.getProjectConfigContext() })
+    ).to.eql({
+      found: true,
+      resolved: {
+        projectName: "test",
+      },
+    })
   })
 
-  it("loads optional varfiles for the action", async () => {
+  it("loads optional varfiles for the action and resolve template strings in varfile", async () => {
     const varfilePath = join(tmpDir.path, "varfile.yml")
     await dumpYaml(varfilePath, {
       projectName: "${project.name}",
@@ -586,9 +595,14 @@ describe("actionConfigsToGraph", () => {
     })
 
     const action = graph.getBuild("foo")
-    const vars = action["variables"]
+    const varContext = action.getVariablesContext()
 
-    expect(vars).to.eql({ projectName: "${project.name}" })
+    expect(
+      varContext.resolve({ nodePath: [], key: [], opts: {}, rootContext: garden.getProjectConfigContext() })
+    ).to.eql({
+      found: true,
+      resolved: { projectName: "test" },
+    })
   })
 
   it("correctly merges varfile with variables", async () => {
@@ -625,9 +639,14 @@ describe("actionConfigsToGraph", () => {
     })
 
     const action = graph.getBuild("foo")
-    const vars = action["variables"]
+    const varContext = action.getVariablesContext()
 
-    expect(vars).to.eql({ foo: "FOO", bar: "BAR", baz: "baz" })
+    expect(
+      varContext.resolve({ nodePath: [], key: [], opts: {}, rootContext: garden.getProjectConfigContext() })
+    ).to.eql({
+      found: true,
+      resolved: { foo: "FOO", bar: "BAR", baz: "baz" },
+    })
   })
 
   it("correctly merges varfile with variables when some variables are overridden with --var cli flag", async () => {
@@ -639,12 +658,12 @@ describe("actionConfigsToGraph", () => {
       variableOverrides: { "foo": "NEW_FOO", "nested.key1": "NEW_KEY_1_VALUE" },
     })
 
-    const tmpDir = dummyGardenInstance.tmpDir
-    const garden = dummyGardenInstance.garden
-    const log = garden.log
+    const _tmpDir = dummyGardenInstance.tmpDir
+    const _garden = dummyGardenInstance.garden
+    const _log = _garden.log
 
     try {
-      const varfilePath = join(tmpDir.path, "varfile.yml")
+      const varfilePath = join(_tmpDir.path, "varfile.yml")
       await dumpYaml(varfilePath, {
         foo: "FOO",
         bar: "BAR",
@@ -654,8 +673,8 @@ describe("actionConfigsToGraph", () => {
       })
 
       const graph = await actionConfigsToGraph({
-        garden,
-        log,
+        garden: _garden,
+        log: _log,
         groupConfigs: [],
         configs: [
           {
@@ -669,7 +688,7 @@ describe("actionConfigsToGraph", () => {
             },
             varfiles: [varfilePath],
             internal: {
-              basePath: tmpDir.path,
+              basePath: _tmpDir.path,
             },
             spec: {},
           },
@@ -680,18 +699,23 @@ describe("actionConfigsToGraph", () => {
       })
 
       const action = graph.getBuild("foo")
-      const vars = action["variables"]
+      const varContext = action.getVariablesContext()
 
-      expect(vars).to.eql({
-        foo: "NEW_FOO",
-        bar: "BAR",
-        baz: "baz",
-        nested: {
-          key1: "NEW_KEY_1_VALUE",
+      expect(
+        varContext.resolve({ nodePath: [], key: [], opts: {}, rootContext: garden.getProjectConfigContext() })
+      ).to.eql({
+        found: true,
+        resolved: {
+          foo: "NEW_FOO",
+          bar: "BAR",
+          baz: "baz",
+          nested: {
+            key1: "NEW_KEY_1_VALUE",
+          },
         },
       })
     } finally {
-      await tmpDir.cleanup()
+      await _tmpDir.cleanup()
     }
   })
 
@@ -907,6 +931,7 @@ describe("actionConfigsToGraph", () => {
           groupConfigs: [],
           configs: [
             {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               kind: <any>"Boop",
               type: "test",
               name: "foo",

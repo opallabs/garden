@@ -26,6 +26,7 @@ import type { RunAction, RunActionConfig } from "../../../actions/run.js"
 import type { TestAction, TestActionConfig } from "../../../actions/test.js"
 import type { ObjectSchema } from "@hapi/joi"
 import type { KubernetesRunOutputs } from "../kubernetes-type/config.js"
+import type { ActionKind } from "../../../plugin/action-types.js"
 
 // DEPLOY //
 
@@ -42,6 +43,7 @@ interface HelmChartSpec {
 
 interface HelmDeployActionSpec {
   atomic: boolean
+  waitForUnhealthyResources: boolean
   chart?: HelmChartSpec
   defaultTarget?: KubernetesTargetResourceSpec
   sync?: KubernetesDeploySyncSpec
@@ -166,7 +168,13 @@ const helmChartSpecSchema = () =>
     )
 
 export const defaultHelmAtomicFlag = false
-export const defaultHelmAtomicFlagDesc = `Whether to set the --atomic flag during installs and upgrades. Set to true if you'd like the changes applied to be reverted on failure. Set to false if e.g. you want to see more information about failures and then manually roll back, instead of having Helm do it automatically on failure.`
+export const defaultHelmAtomicFlagDesc = dedent`
+  Whether to set the \`--atomic\` flag during installs and upgrades. Set to \`true\` if you'd like the changes applied
+  to be reverted on failure. Set to false if e.g. you want to see more information about failures and then manually
+  roll back, instead of having Helm do it automatically on failure.
+
+  Note that setting \`atomic\` to \`true\` implies \`wait\`.
+`
 
 export const helmDeploySchema = () =>
   joi
@@ -174,6 +182,17 @@ export const helmDeploySchema = () =>
     .keys({
       ...helmCommonSchemaKeys(),
       atomic: joi.boolean().default(defaultHelmAtomicFlag).description(defaultHelmAtomicFlagDesc),
+      waitForUnhealthyResources: joi.boolean().default(false).description(dedent`
+        Whether to wait for the Helm command to complete before throwing an error if one of the resources being installed/upgraded is unhealthy.
+
+        By default, Garden will monitor the resources being created by Helm and throw an error as soon as one of them is unhealthy. This allows Garden to fail fast if there's an issue with one of the resources. If no issue is detected, Garden waits for the Helm command to complete.
+
+        If however \`waitForUnhealthyResources\` is set to \`true\` and some resources are unhealthy, then Garden will wait for Helm itself to throw an error which typically happens when it times out in the case of unhealthy resources (e.g. due to \`ImagePullBackOff\` or \`CrashLoopBackOff\` errors).
+
+        Waiting for the timeout can take awhile so using the default value here is recommended unless you'd like to completely mimic Helm's behaviour and not rely on Garden's resource monitoring.
+
+        Note that setting \`atomic\` to \`true\` implies \`waitForUnhealthyResources\`.
+      `),
       chart: helmChartSpecSchema(),
       defaultTarget: defaultTargetSchema(),
       sync: kubernetesDeploySyncSchema(),
@@ -198,7 +217,7 @@ export interface HelmPodRunActionSpec extends KubernetesCommonRunSpec {
 // Maintaining this cache to avoid errors when `kubernetesRunPodSchema` is called more than once with the same `kind`.
 const runSchemas: { [name: string]: ObjectSchema } = {}
 
-export const helmPodRunSchema = (kind: string) => {
+export const helmPodRunSchema = (kind: ActionKind) => {
   const name = `${kind}:helm-pod`
   if (runSchemas[name]) {
     return runSchemas[name]
@@ -206,14 +225,14 @@ export const helmPodRunSchema = (kind: string) => {
   const schema = createSchema({
     name: `${kind}:helm-pod`,
     keys: () => ({
-      ...kubernetesCommonRunSchemaKeys(),
+      ...kubernetesCommonRunSchemaKeys(kind),
       releaseName: helmReleaseNameSchema().description(
         `Optionally override the release name used when rendering the templates (defaults to the ${kind} name).`
       ),
       chart: helmChartSpecSchema(),
       values: helmValuesSchema(),
       valueFiles: helmValueFilesSchema(),
-      resource: runPodResourceSchema("Run"),
+      resource: runPodResourceSchema(kind),
       timeout: joi
         .number()
         .integer()

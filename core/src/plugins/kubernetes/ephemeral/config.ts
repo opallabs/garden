@@ -7,6 +7,7 @@
  */
 
 import fsExtra from "fs-extra"
+
 const { mkdirp, writeFile } = fsExtra
 import { load } from "js-yaml"
 import moment from "moment"
@@ -17,12 +18,13 @@ import { ConfigurationError } from "../../../exceptions.js"
 import type { ConfigureProviderParams } from "../../../plugin/handlers/Provider/configureProvider.js"
 import { dedent } from "../../../util/string.js"
 import type { KubernetesConfig } from "../config.js"
-import { defaultResources } from "../config.js"
+import { defaultResources, utilImageRegistryDomainSpec } from "../config.js"
 import { namespaceSchema } from "../config.js"
 import { EPHEMERAL_KUBERNETES_PROVIDER_NAME } from "./ephemeral.js"
-import { DEFAULT_GARDEN_CLOUD_DOMAIN } from "../../../constants.js"
 import { defaultSystemNamespace } from "../constants.js"
 import { styles } from "../../../logger/styles.js"
+import { isGardenCommunityEdition } from "../../../cloud/util.js"
+import { reportDeprecatedFeatureUsage } from "../../../util/deprecations.js"
 
 export type EphemeralKubernetesClusterType = "ephemeral"
 
@@ -30,6 +32,7 @@ export const configSchema = () =>
   providerConfigBaseSchema()
     .keys({
       name: joiProviderName(EPHEMERAL_KUBERNETES_PROVIDER_NAME),
+      utilImageRegistryDomain: utilImageRegistryDomainSpec,
       namespace: namespaceSchema().description(
         "Specify which namespace to deploy services to (defaults to the project name). " +
           "Note that the framework generates other namespaces as well with this name as a prefix."
@@ -47,6 +50,8 @@ export const configSchema = () =>
 export async function configureProvider(params: ConfigureProviderParams<KubernetesConfig>) {
   const { base, log, ctx, config: baseConfig } = params
 
+  reportDeprecatedFeatureUsage({ log, deprecation: "ephemeralKubernetesProvider" })
+
   if (!ctx.cloudApi) {
     throw new ConfigurationError({
       message: `You are not logged in. You must log in with the ${styles.command(
@@ -54,7 +59,7 @@ export async function configureProvider(params: ConfigureProviderParams<Kubernet
       )} command to use the ${EPHEMERAL_KUBERNETES_PROVIDER_NAME} plugin`,
     })
   }
-  if (ctx.cloudApi && ctx.cloudApi?.domain !== DEFAULT_GARDEN_CLOUD_DOMAIN) {
+  if (ctx.cloudApi && !isGardenCommunityEdition(ctx.cloudApi.domain)) {
     throw new ConfigurationError({
       message: `${EPHEMERAL_KUBERNETES_PROVIDER_NAME} provider is currently not supported for ${ctx.cloudApi.distroName}.`,
     })

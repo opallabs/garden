@@ -22,7 +22,7 @@ import {
   PluginError,
 } from "@garden-io/sdk/build/src/exceptions.js"
 import { dumpYaml } from "@garden-io/core/build/src/util/serialization.js"
-import type { DeepPrimitiveMap } from "@garden-io/core/build/src/config/common.js"
+import type { DeepPrimitiveMap, Primitive } from "@garden-io/core/build/src/config/common.js"
 import { loadAndValidateYaml } from "@garden-io/core/build/src/config/base.js"
 import { getPluginOutputsPath } from "@garden-io/sdk"
 import type { Log, PluginContext } from "@garden-io/sdk/build/src/types.js"
@@ -44,6 +44,7 @@ export interface PulumiParams {
 export interface PulumiConfig {
   config: DeepPrimitiveMap
   backend?: { url: string }
+  [key: string]: DeepPrimitiveMap | Primitive | undefined
 }
 
 interface PulumiManifest {
@@ -151,9 +152,13 @@ export async function previewStack(
 }
 
 export async function getStackOutputs({ log, ctx, provider, action }: PulumiParams): Promise<any> {
+  const args = ["stack", "output", "--json"]
+  if (action.getSpec("showSecretsInOutput")) {
+    args.push("--show-secrets")
+  }
   const res = await pulumi(ctx, provider).json({
     log,
-    args: ["stack", "output", "--json"],
+    args,
     env: ensureEnv({ log, ctx, provider, action }),
     cwd: getActionStackRoot(action),
   })
@@ -250,7 +255,7 @@ export function getActionStackRoot(action: Resolved<PulumiDeploy>): string {
  * For convenience, returns the path to the action's stack config file.
  */
 export async function applyConfig(params: PulumiParams & { previewDirPath?: string }): Promise<string> {
-  const { ctx, action, log } = params
+  const { ctx, action, log, provider } = params
   await ensureOutputDirs(ctx)
 
   const stackConfigPath = getStackConfigPath(action, ctx.environmentName)
@@ -258,10 +263,12 @@ export async function applyConfig(params: PulumiParams & { previewDirPath?: stri
   let stackConfigFileExists: boolean
   try {
     const fileData = await readFile(stackConfigPath)
-    stackConfig = await loadAndValidateYaml(
-      fileData.toString(),
-      `${basename(stackConfigPath)} in directory ${dirname(stackConfigPath)}`
-    )[0].toJS()
+    const stackConfigDocs = await loadAndValidateYaml({
+      content: fileData.toString(),
+      sourceDescription: `${basename(stackConfigPath)} in directory ${dirname(stackConfigPath)}`,
+      filename: stackConfigPath,
+    })
+    stackConfig = stackConfigDocs[0].toJS()
     stackConfigFileExists = true
   } catch (err) {
     log.debug(`No pulumi stack configuration file for action ${action.name} found at ${stackConfigPath}`)
@@ -292,27 +299,41 @@ export async function applyConfig(params: PulumiParams & { previewDirPath?: stri
   log.debug(`pulumiVariables from action: ${JSON.stringify(pulumiVars, null, 2)}`)
   log.debug(`varfileContents: ${JSON.stringify(varfileContents, null, 2)}`)
 
-  // Pulumi varfiles take precedence over action.spec.pulumiVariables, and are merged in declaration order.
   // Pulumi variables (from action.spec.pulumiVariables) take precedence over any variables declared in pulumi varfiles.
   let vars: DeepPrimitiveMap = {}
-  for (const varfileVars of varfileContents) {
-    vars = <DeepPrimitiveMap>merge(vars, varfileVars)
+
+  if (action.getSpec().useNewPulumiVarfileSchema || provider.config.useNewPulumiVarfileSchema) {
+    for (const varfileVars of varfileContents) {
+      vars = <DeepPrimitiveMap>merge(vars, varfileVars)
+    }
+    stackConfig.config = <DeepPrimitiveMap>merge(vars.config, pulumiVars || {})
+    log.debug(`merged vars: ${JSON.stringify(stackConfig, null, 2)}`)
+    Object.entries(vars).forEach(([key, value]) => {
+      if (key !== "config") {
+        stackConfig[key] = value as Primitive | DeepPrimitiveMap
+      }
+    })
+  } else {
+    log.warn(dedent`
+      The old Pulumi varfile schema is deprecated and will be removed in a future version of Garden.
+      For more information see: https://docs.garden.io/pulumi-plugin/about#pulumi-varfile-schema
+    `)
+    for (const varfileVars of varfileContents) {
+      vars = <DeepPrimitiveMap>merge(vars, varfileVars)
+    }
+    vars = <DeepPrimitiveMap>merge(vars, pulumiVars || {})
+    log.debug(`merged vars: ${JSON.stringify(vars, null, 2)}`)
+    stackConfig.config = vars
   }
-  vars = <DeepPrimitiveMap>merge(vars, pulumiVars || {})
-  log.debug(`merged vars: ${JSON.stringify(vars, null, 2)}`)
-  stackConfig.config = vars
-
   stackConfig.backend = { url: params.provider.config.backendURL }
-
   if (stackConfigFileExists && isEmpty(vars)) {
-    log.debug(deline`
+    log.debug(dedent`
       stack config file exists but no variables are defined in pulumiVars or pulumiVarfiles - skip writing stack config
     `)
   } else {
     log.debug(`merged config (written to ${stackConfigPath}): ${JSON.stringify(stackConfig, null, 2)}`)
+    await dumpYaml(stackConfigPath, stackConfig)
   }
-
-  await dumpYaml(stackConfigPath, stackConfig)
 
   return stackConfigPath
 }
@@ -556,7 +577,12 @@ async function loadPulumiVarfile({
 
   try {
     const str = (await readFile(resolvedPath)).toString()
-    const resolved = ctx.resolveTemplateStrings(str)
+    const resolved = ctx.legacyResolveTemplateString(str)
+    if (typeof resolved !== "string") {
+      throw new ConfigurationError({
+        message: `Expected template expression to resolve to string; Actually got: ${typeof resolved}`,
+      })
+    }
     const parsed = load(resolved)
     return parsed as DeepPrimitiveMap
   } catch (error) {

@@ -6,7 +6,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-import { expectError, makeTestGardenA, taskResultOutputs, testPluginReferences } from "../../../helpers.js"
+import { expectError, makeTestGardenA, testPluginReferences } from "../../../helpers.js"
 import type { Server } from "http"
 import { GardenServer, startServer } from "../../../../src/server/server.js"
 import type { Garden } from "../../../../src/garden.js"
@@ -17,12 +17,11 @@ import { gardenEnv } from "../../../../src/constants.js"
 import { deepOmitUndefined } from "../../../../src/util/objects.js"
 import { uuidv4 } from "../../../../src/util/random.js"
 import { GardenInstanceManager } from "../../../../src/server/instance-manager.js"
-import type { CommandParams } from "../../../../src/commands/base.js"
+import type { CommandParams, ProcessCommandResult } from "../../../../src/commands/base.js"
 import { Command } from "../../../../src/commands/base.js"
 import request from "supertest"
 import getPort from "get-port"
 import WebSocket from "ws"
-import { FakeCloudApi } from "../../../helpers/api.js"
 
 describe("GardenServer", () => {
   let garden: Garden
@@ -61,7 +60,6 @@ describe("GardenServer", () => {
       extraCommands: [new TestCommand()],
       force: true,
       plugins: testPluginReferences(),
-      cloudApiFactory: FakeCloudApi.factory,
     })
     manager.set(garden.log, garden)
     gardenEnv.GARDEN_SERVER_HOSTNAME = hostname
@@ -214,6 +212,8 @@ describe("GardenServer", () => {
         .set({ [authTokenHeader]: gardenServer.authKey })
         .send({ command: "get config", stringArguments: [] })
         .expect(200)
+      expect(res.body.errors).to.eq(undefined, `error response: ${res.body.errors?.[0]?.stack}`)
+
       const config = await garden.dumpConfig({ log: garden.log })
       expect(res.body.result).to.eql(deepOmitUndefined(config))
     })
@@ -227,9 +227,10 @@ describe("GardenServer", () => {
         })
         .expect(200)
 
-      const result = taskResultOutputs(res.body.result)
-      expect(result["build.module-a"]).to.exist
-      expect(result["build.module-a"].state).to.equal("ready")
+      expect(res.body.errors).to.eq(undefined, `error response: ${res.body.errors?.[0]?.stack}`)
+      const result = res.body.result as ProcessCommandResult
+      expect(result.build["module-a"]).to.exist
+      expect(result.build["module-a"].actionState).to.equal("ready")
     })
 
     it("creates a Garden instance as needed", async () => {
@@ -238,6 +239,7 @@ describe("GardenServer", () => {
         .set({ [authTokenHeader]: gardenServer.authKey })
         .send({ command: "get config --var foo=bar" })
         .expect(200)
+      expect(res.body.errors).to.eq(undefined, `error response: ${res.body.errors?.[0]?.stack}`)
       expect(res.body.result.variables.foo).to.equal("bar")
     })
   })
@@ -299,6 +301,7 @@ describe("GardenServer", () => {
 
   describe("/ws", () => {
     let ws: WebSocket
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let messages: any[]
 
     beforeEach((done) => {
@@ -324,6 +327,7 @@ describe("GardenServer", () => {
      * Optionally filter on specific event types to e.g. only collect messages of type "event" or
      * only collect messages of type "logEntry".
      */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     function onMessageAfterReady({ cb, skipType }: { cb: (req: any) => void; skipType?: string }) {
       ws.on("message", (msg) => {
         const parsed = JSON.parse(msg.toString())
@@ -420,6 +424,7 @@ describe("GardenServer", () => {
         .dumpConfig({ log: garden.log })
         .then((config) => {
           onMessageAfterReady({
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             cb: (req: any) => {
               if (req.type !== "commandResult") {
                 return
@@ -453,6 +458,7 @@ describe("GardenServer", () => {
       const gardenKey = garden.getInstanceKey()
 
       onMessageAfterReady({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         cb: (req: any) => {
           if (req.type !== "commandResult") {
             return
@@ -491,14 +497,15 @@ describe("GardenServer", () => {
           if (req.type !== "commandResult") {
             return
           }
-          const taskResult = taskResultOutputs(req.result)
+          const taskResult = req.result
           const result = {
             ...req,
             result: taskResult,
           }
           expect(result.requestId).to.equal(id)
-          expect(result.result["build.module-a"]).to.exist
-          expect(result.result["build.module-a"].state).to.equal("ready")
+          const processRes = result.result as ProcessCommandResult
+          expect(processRes.build["module-a"]).to.exist
+          expect(processRes.build["module-a"].actionState).to.equal("ready")
           done()
         },
         skipType: "logEntry",
@@ -529,14 +536,15 @@ describe("GardenServer", () => {
           if (msg.type !== "commandResult") {
             return
           }
-          const taskResult = taskResultOutputs(msg.result)
+          const taskResult = msg.result
           const result = {
             ...msg,
             result: taskResult,
           }
           expect(result.requestId).to.equal(id)
-          expect(result.result["build.module-a"]).to.exist
-          expect(result.result["build.module-a"].state).to.equal("ready")
+          const processRes = result.result as ProcessCommandResult
+          expect(processRes.build["module-a"]).to.exist
+          expect(processRes.build["module-a"].actionState).to.equal("ready")
           done()
         },
         skipType: "logEntry",

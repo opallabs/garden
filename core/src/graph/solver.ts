@@ -11,11 +11,10 @@ import type { Log } from "../logger/log-entry.js"
 import type { GardenError, GardenErrorParams } from "../exceptions.js"
 import { GraphError, toGardenError } from "../exceptions.js"
 import { uuidv4 } from "../util/random.js"
-import { DependencyGraph, metadataForLog } from "./common.js"
 import { Profile } from "../util/profiling.js"
 import { TypedEventEmitter } from "../util/events.js"
-import { groupBy, keyBy } from "lodash-es"
-import type { GraphResult, TaskEventBase } from "./results.js"
+import { keyBy } from "lodash-es"
+import type { GraphResult, GraphResultFromTask, TaskEventBase } from "./results.js"
 import { GraphResults, resultToString } from "./results.js"
 import { gardenEnv } from "../constants.js"
 import type { Garden } from "../garden.js"
@@ -34,13 +33,17 @@ export interface SolveOpts {
 }
 
 export interface SolveParams<T extends BaseTask = BaseTask> extends SolveOpts {
-  log: Log
   tasks: T[]
 }
 
 export interface SolveResult<T extends Task = Task> {
   error: GraphResultError | null
   results: GraphResults<T>
+}
+
+export interface SingleTaskSolveResult<T extends Task = Task> {
+  error: GraphResultError | null
+  result: GraphResultFromTask<T> | null
 }
 
 @Profile()
@@ -54,6 +57,7 @@ export class GraphSolver extends TypedEventEmitter<SolverEvents> {
   // Tasks currently running
   private readonly inProgress: WrappedNodes
 
+  private dirty: boolean
   private inLoop: boolean
 
   private log: Log
@@ -67,8 +71,9 @@ export class GraphSolver extends TypedEventEmitter<SolverEvents> {
   ) {
     super()
 
-    this.log = garden.log
+    this.log = garden.log.createLog({ name: "graph-solver" })
     this.inLoop = false
+    this.dirty = false
     this.requestedTasks = {}
     this.nodes = {}
     this.pendingNodes = {}
@@ -76,12 +81,12 @@ export class GraphSolver extends TypedEventEmitter<SolverEvents> {
     this.lock = new AsyncLock()
 
     this.on("start", () => {
-      this.log.silly(`GraphSolver: start`)
+      this.log.silly(() => `GraphSolver: start`)
       this.emit("loop", {})
     })
 
     this.on("loop", () => {
-      this.log.silly(`GraphSolver: loop`)
+      this.log.silly(() => `GraphSolver: loop`)
       this.loop()
     })
   }
@@ -91,18 +96,19 @@ export class GraphSolver extends TypedEventEmitter<SolverEvents> {
   }
 
   async solve(params: SolveParams): Promise<SolveResult> {
-    const { statusOnly, tasks, throwOnError, log } = params
+    const { statusOnly, tasks, throwOnError } = params
 
     const batchId = uuidv4()
     const results = new GraphResults(tasks)
     let aborted = false
 
-    log.silly(`GraphSolver: Starting batch ${batchId} (${tasks.length} tasks)`)
+    this.log.silly(() => `Starting batch ${batchId} (${tasks.length} tasks)`)
 
     if (tasks.length === 0) {
       return { results, error: null }
     }
 
+    const log = this.log
     // TODO-0.13.1+: remove this lock and test with concurrent execution
     return this.lock.acquire("solve", async () => {
       const output = await new Promise<SolveResult>((resolve, reject) => {
@@ -114,7 +120,7 @@ export class GraphSolver extends TypedEventEmitter<SolverEvents> {
         )
 
         function completeHandler(result: GraphResult) {
-          log.silly(`GraphSolver: Complete handler for batch ${batchId} called with result ${result.key}`)
+          log.silly(() => `Complete handler for batch ${batchId} called with result ${result.key}`)
 
           if (aborted) {
             return
@@ -129,26 +135,15 @@ export class GraphSolver extends TypedEventEmitter<SolverEvents> {
             return
           }
 
-          log.silly(`GraphSolver: Complete handler for batch ${batchId} matched with request ${request.getKey()}`)
+          log.silly(() => `Complete handler for batch ${batchId} matched with request ${request.getKey()}`)
 
           results.setResult(request.task, result)
-
-          if (throwOnError && result.error) {
-            cleanup({
-              error: new GraphResultError({
-                message: `Failed to ${result.description}: ${result.error}`,
-                results,
-                wrappedErrors: [toGardenError(result.error)],
-              }),
-            })
-            return
-          }
 
           const missing = results.getMissing()
 
           if (missing.length > 0) {
             const missingKeys = missing.map((t) => t.getBaseKey())
-            log.silly(`Batch ${batchId} has ${missing.length} result(s) still missing: ${missingKeys.join(", ")}`)
+            log.silly(() => `Batch ${batchId} has ${missing.length} result(s) still missing: ${missingKeys.join(", ")}`)
             // Keep going if any of the expected results are pending
             return
           }
@@ -179,14 +174,20 @@ export class GraphSolver extends TypedEventEmitter<SolverEvents> {
             error = new GraphResultError({ message: msg, results, wrappedErrors })
           }
 
-          cleanup({ error: null })
-
-          if (error) {
-            log.silly(`Batch ${batchId} failed: ${error.message}`)
+          if (!error) {
+            log.silly(() => `Batch ${batchId} completed`)
           } else {
-            log.silly(`Batch ${batchId} completed`)
+            log.silly(() => `Batch ${batchId} failed: ${error.message}`)
+
+            if (throwOnError) {
+              // if throwOnError is true, we reject the promise with the error.
+              cleanup({ error })
+              return
+            }
           }
 
+          // if throwOnError is false, we resolve the promise with the error and results.
+          cleanup({ error: null })
           resolve({ error, results })
         }
 
@@ -214,31 +215,34 @@ export class GraphSolver extends TypedEventEmitter<SolverEvents> {
     })
   }
 
-  private getPendingGraph() {
+  private *getPendingLeaves(): Generator<TaskNode, undefined, undefined> {
     const nodes = Object.values(this.pendingNodes)
-    const graph = new DependencyGraph<TaskNode>()
+    const visitedKeys = new Set<string>()
 
-    const addNode = (node: TaskNode) => {
+    function* addNode(node: TaskNode) {
       const key = node.getKey()
 
-      if (node.isComplete()) {
+      if (node.isComplete() || visitedKeys.has(key)) {
         return
       }
-      graph.addNode(key, node)
+      visitedKeys.add(key)
 
+      // TODO: We could optimize further by making this method a generator too.
       const deps = node.getRemainingDependencies()
+      if (deps.length === 0) {
+        // Leaf node found
+        yield node
+        return
+      }
 
       for (const dep of deps) {
-        addNode(dep)
-        graph.addDependency(key, dep.getKey())
+        yield* addNode(dep)
       }
     }
 
     for (const node of nodes) {
-      addNode(node)
+      yield* addNode(node)
     }
-
-    return graph
   }
 
   start() {
@@ -286,6 +290,12 @@ export class GraphSolver extends TypedEventEmitter<SolverEvents> {
     if (this.inLoop) {
       return
     }
+    if (!this.dirty) {
+      // The graph becomes dirty when a task is requested or completed: This means that either a new task node
+      // may have been added, or that a new result has been set on a node (which will affect the next graph
+      // evaluation).
+      return
+    }
     this.inLoop = true
 
     try {
@@ -299,36 +309,56 @@ export class GraphSolver extends TypedEventEmitter<SolverEvents> {
         }
       }
 
-      const graph = this.getPendingGraph()
+      const leafGenerator = this.getPendingLeaves()
+      let leafCount = 0
 
-      if (graph.size() === 0) {
+      const inProgressNodes = Object.values(this.inProgress)
+
+      // Enforce concurrency limits per task type and concurrency group key
+      const pendingConcurrencyGroupCapacitites: { [key: string]: number } = {}
+
+      this.dirty = false
+
+      // We could do this with a `groupBy`, but this is more efficient (and the loop method is run frequently).
+      for (const node of inProgressNodes) {
+        const groupKey = node.concurrencyGroupKey
+        if (!pendingConcurrencyGroupCapacitites[groupKey]) {
+          pendingConcurrencyGroupCapacitites[groupKey] = 0
+        }
+        pendingConcurrencyGroupCapacitites[groupKey]++
+      }
+      const leavesLimitedByGroup: TaskNode[] = []
+      for (const node of leafGenerator) {
+        if (leafCount >= this.hardConcurrencyLimit - inProgressNodes.length) {
+          // Enforce hard global limit. Note that we never get more leaves than this from `leafGenerator`, which can
+          // save on compute in big graphs.
+          break
+        }
+        leafCount++
+        const groupKey = node.concurrencyGroupKey
+        // Note: All nodes within a given concurrency group should have the same limit.
+        const groupLimit = node.concurrencyLimit
+        if (!pendingConcurrencyGroupCapacitites[groupKey]) {
+          pendingConcurrencyGroupCapacitites[groupKey] = 0
+        }
+        if (pendingConcurrencyGroupCapacitites[groupKey] >= groupLimit) {
+          // We've already reached the concurrency limit for this group, so we won't schedule this node now.
+          continue
+        }
+        // There's capacity available for this group, so we schedule the node
+        leavesLimitedByGroup.push(node)
+        pendingConcurrencyGroupCapacitites[groupKey]++
+      }
+      if (leafCount === 0) {
         return
       }
 
-      const leaves = graph.overallOrder(true)
-      const pending = leaves.map((key) => this.nodes[key])
-
-      const inProgressNodes = Object.values(this.inProgress)
-      const inProgressByGroup = groupBy(inProgressNodes, "type")
-
-      // Enforce concurrency limits per task type
-      const grouped = groupBy(pending, (n) => n.concurrencyGroupKey)
-      const limitedByGroup = Object.values(grouped).flatMap((nodes) => {
-        // Note: We can be sure there is at least one node in the array
-        const groupLimit = nodes[0].concurrencyLimit
-        const inProgress = inProgressByGroup[nodes[0].type] || []
-        return nodes.slice(0, groupLimit - inProgress.length)
-      })
-
-      if (limitedByGroup.length === 0) {
+      if (leavesLimitedByGroup.length === 0) {
         this.emit("loop", {})
         return
       }
 
-      // Enforce hard global limit
-      const nodesToProcess = limitedByGroup
-        .slice(0, this.hardConcurrencyLimit - inProgressNodes.length)
-        .filter((node) => !this.inProgress[node.getKey()])
+      const nodesToProcess = leavesLimitedByGroup.filter((node) => !this.inProgress[node.getKey()])
 
       if (nodesToProcess.length === 0) {
         this.emit("loop", {})
@@ -370,6 +400,7 @@ export class GraphSolver extends TypedEventEmitter<SolverEvents> {
    * Processes a single task to completion, handling errors and providing its result to in-progress task batches.
    */
   private async processNode(node: TaskNode, startedAt: Date) {
+    this.dirty = true
     // Check for missing dependencies by calculating the input version so we can handle the exception
     // as a user error before getting deeper into the control flow (where it would result in an internal
     // error with a noisy stack trace).
@@ -380,7 +411,9 @@ export class GraphSolver extends TypedEventEmitter<SolverEvents> {
       return
     }
 
-    this.logTask(node)
+    this.log.silly(() => `Processing node ${taskStyle(node.getKey())}`)
+    // TODO-performance: Record that a result or an error has become available for this node, use for looping
+    // in evaluateRequests.
 
     try {
       const processResult = await node.execute()
@@ -394,6 +427,7 @@ export class GraphSolver extends TypedEventEmitter<SolverEvents> {
   }
 
   private requestTask(params: TaskRequestParams) {
+    this.dirty = true
     const request = new RequestTaskNode(params)
     if (!this.requestedTasks[params.batchId]) {
       this.requestedTasks[params.batchId] = {}
@@ -403,6 +437,7 @@ export class GraphSolver extends TypedEventEmitter<SolverEvents> {
   }
 
   private evaluateRequests() {
+    // TODO-performance: Only iterate over requests with new results since last loop
     for (const [_batchId, requests] of Object.entries(this.requestedTasks)) {
       for (const request of Object.values(requests)) {
         if (request.isComplete()) {
@@ -430,6 +465,8 @@ export class GraphSolver extends TypedEventEmitter<SolverEvents> {
           this.log.silly(() => `Request ${request.getKey()} has ready status and force=false, no need to process.`)
           this.completeTask({ ...status, node: request })
         } else {
+          // TODO-performance: Add processing nodes for requests only once, during the solve call before looping.
+          // We create exactly one request node for each requested task, so this is known up front.
           const processNode = this.getNode({ type: "process", task, statusOnly: request.statusOnly })
           const result = this.getPendingResult(processNode)
 
@@ -445,10 +482,14 @@ export class GraphSolver extends TypedEventEmitter<SolverEvents> {
     }
 
     const currentlyActive = Object.values(this.inProgress).map((n) => n.describe())
-    this.log.silly(`Task nodes in progress: ${currentlyActive.length > 0 ? currentlyActive.join(", ") : "(none)"}`)
+    this.log.silly(
+      () =>
+        `Task nodes in progress (${currentlyActive.length}): ${currentlyActive.length > 0 ? currentlyActive.join(", ") : "(none)"}`
+    )
   }
 
   private ensurePendingNode(node: TaskNode, dependant: TaskNode) {
+    this.dirty = true
     const key = node.getKey()
     const existing = this.pendingNodes[key]
 
@@ -462,6 +503,7 @@ export class GraphSolver extends TypedEventEmitter<SolverEvents> {
   }
 
   private completeTask(params: CompleteTaskParams & { node: TaskNode }) {
+    this.dirty = true
     const node = params.node
     const result = node.complete(params)
     delete this.inProgress[node.getKey()]
@@ -486,19 +528,6 @@ export class GraphSolver extends TypedEventEmitter<SolverEvents> {
   //
   // Logging
   //
-  private logTask(node: TaskNode) {
-    // The task.log instance is of type ActionLog but we want to use a "CoreLog" here.
-    const taskLog = node.task.log.root.createLog({ name: "graph-solver" })
-    taskLog.silly({
-      msg: `Processing node ${taskStyle(node.getKey())}`,
-      metadata: metadataForLog({
-        task: node.task,
-        inputVersion: node.getInputVersion(),
-        status: "active",
-      }),
-    })
-  }
-
   private logTaskError(node: TaskNode, err: Error) {
     const log = node.task.log
     const prefix = `Failed ${node.describe()} ${renderDuration(log.getDuration())}. This is what happened:`
@@ -506,8 +535,9 @@ export class GraphSolver extends TypedEventEmitter<SolverEvents> {
   }
 
   private logInternalError(node: TaskNode, err: Error) {
-    const prefix = `An internal error occurred while ${node.describe()}. This is what happened:`
-    this.logError(node.task.log, err, prefix)
+    const log = node.task.log
+    const prefix = `An internal error occurred while ${node.describe()} ${renderDuration(log.getDuration())}. This is what happened:`
+    this.logError(log, err, prefix)
   }
 
   private logError(log: Log, err: Error, errMessagePrefix: string) {
@@ -519,7 +549,7 @@ export class GraphSolver extends TypedEventEmitter<SolverEvents> {
     })
     log.error({ msg, rawMsg, error, showDuration: false })
     const divider = renderDivider()
-    log.silly(
+    log.silly(() =>
       styles.primary(`Full error with stack trace and wrapped errors:\n${divider}\n${error.toString(true)}\n${divider}`)
     )
   }

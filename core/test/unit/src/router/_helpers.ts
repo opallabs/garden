@@ -82,10 +82,12 @@ export async function getRouterTestData() {
 }
 
 function getRouterUnitTestPlugins() {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function getTestPluginOutputs(params: any) {
     return { base: "ok", foo: params.action._config[returnWrongOutputsCfgKey] ? 123 : "ok" }
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function validateParams(params: any, schema: Joi.ObjectSchema) {
     validateSchema(
       params,
@@ -398,9 +400,9 @@ function getRouterUnitTestPlugins() {
                 outputs: {
                   foo: "bar",
                   plugin: "test-plugin-a",
-                  resolvedEnvName: _params.ctx.resolveTemplateStrings("${environment.name}"),
+                  resolvedEnvName: _params.ctx.legacyResolveTemplateString("${environment.name}"),
                   resolvedActionVersion: "TODO-G2 (see one line below)",
-                  // resolvedActionVersion: _params.ctx.resolveTemplateStrings("${runtime.build.module-a.version}"),
+                  // resolvedActionVersion: _params.ctx.legacyResolveTemplateString("${runtime.build.module-a.version}"),
                 },
               }
             },

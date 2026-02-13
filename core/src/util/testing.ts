@@ -10,31 +10,29 @@ import env from "env-var"
 import type { GlobalOptions, ParameterValues } from "../cli/params.js"
 import { globalOptions } from "../cli/params.js"
 import cloneDeep from "fast-copy"
-import { isEqual, keyBy, set, mapValues, round } from "lodash-es"
+import { isEqual, isFunction, keyBy, mapValues, round, set } from "lodash-es"
 import type { GardenOpts, GardenParams, GetConfigGraphParams } from "../garden.js"
 import { Garden, resolveGardenParams } from "../garden.js"
-import type { DeepPrimitiveMap, StringMap } from "../config/common.js"
+import type { StringMap } from "../config/common.js"
 import type { ModuleConfig } from "../config/module.js"
 import type { WorkflowConfig, WorkflowConfigMap } from "../config/workflow.js"
-import { resolveMsg, type Log, type LogEntry } from "../logger/log-entry.js"
+import { type Log, type LogEntry, resolveMsg } from "../logger/log-entry.js"
 import type { GardenModule, ModuleConfigMap } from "../types/module.js"
 import { findByName, getNames, hashString } from "./util.js"
-import { GardenError, InternalError } from "../exceptions.js"
+import { GardenError, InternalError, toGardenError } from "../exceptions.js"
 import type { EventName, Events } from "../events/events.js"
 import { EventBus } from "../events/events.js"
 import { dedent, naturalList } from "./string.js"
 import pathIsInside from "path-is-inside"
 import { basename, dirname, join, resolve } from "path"
-import { DEFAULT_BUILD_TIMEOUT_SEC, GARDEN_CORE_ROOT, GardenApiVersion } from "../constants.js"
 import type { GitScanMode } from "../constants.js"
-import { getRootLogger } from "../logger/logger.js"
+import { DEFAULT_BUILD_TIMEOUT_SEC, GARDEN_CORE_ROOT, GardenApiVersion } from "../constants.js"
 import stripAnsi from "strip-ansi"
 import type { VcsHandler } from "../vcs/vcs.js"
 import type { ConfigGraph } from "../graph/config-graph.js"
-import type { SolveParams } from "../graph/solver.js"
 import type { GraphResults } from "../graph/results.js"
 import { expect } from "chai"
-import type { ActionConfig, ActionConfigMap, ActionKind, ActionStatus } from "../actions/types.js"
+import type { ActionConfig, ActionConfigMap, ActionKind, ActionStatus, BaseActionConfig } from "../actions/types.js"
 import type { WrappedActionRouterHandlers } from "../router/base.js"
 import type {
   BuiltinArgs,
@@ -46,11 +44,8 @@ import type {
 } from "../commands/base.js"
 import { validateSchema } from "../config/validation.js"
 import fsExtra, { exists } from "fs-extra"
-
-const { mkdirp, remove } = fsExtra
 import { GlobalConfigStore } from "../config-store/global.js"
 import { isPromise } from "./objects.js"
-import { styles } from "../logger/styles.js"
 import type { ConfigTemplateConfig } from "../config/config-template.js"
 import type { PluginToolSpec, ToolBuildSpec } from "../plugin/tools.js"
 import { fileURLToPath, parse } from "url"
@@ -58,6 +53,11 @@ import { createReadStream, createWriteStream } from "fs"
 import got from "got"
 import { createHash } from "node:crypto"
 import { pipeline } from "node:stream/promises"
+import type { GardenCloudApiFactory } from "../cloud/api.js"
+import { parseTemplateCollection } from "../template/templated-collections.js"
+import type { VariablesContext } from "../config/template-contexts/variables.js"
+
+const { mkdirp, remove } = fsExtra
 
 export class TestError extends GardenError {
   type = "_test"
@@ -113,10 +113,10 @@ const moduleConfigDefaults: ModuleConfig = {
   type: "test",
 }
 
-export function moduleConfigWithDefaults(partial: PartialModuleConfig) {
+export function moduleConfigWithDefaults(partial: PartialModuleConfig): ModuleConfig {
   const defaults = cloneDeep(moduleConfigDefaults)
 
-  return {
+  const config: ModuleConfig = {
     ...defaults,
     ...partial,
     build: {
@@ -124,6 +124,9 @@ export function moduleConfigWithDefaults(partial: PartialModuleConfig) {
       ...(partial.build || {}),
     },
   }
+
+  // @ts-expect-error todo: correct types for unresolved configs
+  return parseTemplateCollection({ value: config, source: { path: [] } })
 }
 
 /**
@@ -166,9 +169,6 @@ export class TestEventBus extends EventBus {
 const defaultCommandInfo = { name: "test", args: {}, opts: {} }
 export const repoRoot = resolve(GARDEN_CORE_ROOT, "..")
 
-const paramCache: { [key: string]: GardenParams } = {}
-// const configGraphCache: { [key: string]: ConfigGraph } = {}
-
 export type TestGardenOpts = Partial<GardenOpts> & {
   noCache?: boolean
   noTempDir?: boolean
@@ -176,6 +176,7 @@ export type TestGardenOpts = Partial<GardenOpts> & {
   remoteContainerAuth?: boolean
   clearConfigsOnScan?: boolean
   gitScanMode?: GitScanMode
+  overrideCloudApiFactory?: GardenCloudApiFactory
 }
 
 export class TestGarden extends Garden {
@@ -188,7 +189,7 @@ export class TestGarden extends Garden {
   public declare configTemplates: { [name: string]: ConfigTemplateConfig }
   public declare vcs: VcsHandler
   public declare secrets: StringMap
-  public declare variables: DeepPrimitiveMap
+  public declare variables: VariablesContext
   private repoRoot!: string
   public cacheKey!: string
   public clearConfigsOnScan = false
@@ -203,30 +204,11 @@ export class TestGarden extends Garden {
     currentDirectory: string,
     opts?: TestGardenOpts
   ): Promise<InstanceType<T>> {
-    // Cache the resolved params to save a bunch of time during tests
-    // TODO: re-instate this after we're done refactoring
-    const cacheKey = undefined
-    // const cacheKey = opts?.noCache
-    //   ? undefined
-    //   : hashString(serializeObject([currentDirectory, { ...opts, log: undefined }]))
-
-    let params: GardenParams
-
-    if (cacheKey && paramCache[cacheKey]) {
-      params = cloneDeep(paramCache[cacheKey])
-      // Need to do these separately to avoid issues around cloning
-      params.log = opts?.log || getRootLogger().createLog()
-      params.plugins = opts?.plugins || []
-    } else {
-      params = await resolveGardenParams(currentDirectory, { commandInfo: defaultCommandInfo, ...opts })
-      if (opts?.gitScanMode) {
-        params.projectConfig.scan ??= { git: { mode: opts.gitScanMode } }
-        params.projectConfig.scan.git ??= { mode: opts.gitScanMode }
-        params.projectConfig.scan.git.mode = opts.gitScanMode
-      }
-      if (cacheKey) {
-        paramCache[cacheKey] = cloneDeep({ ...params, log: <any>{}, plugins: [] })
-      }
+    const params = await resolveGardenParams(currentDirectory, { commandInfo: defaultCommandInfo, ...opts })
+    if (opts?.gitScanMode) {
+      params.projectConfig.scan ??= { git: { mode: opts.gitScanMode } }
+      params.projectConfig.scan.git ??= { mode: opts.gitScanMode }
+      params.projectConfig.scan.git.mode = opts.gitScanMode
     }
 
     const garden = new this(params) as InstanceType<T>
@@ -234,8 +216,6 @@ export class TestGarden extends Garden {
     if (pathIsInside(currentDirectory, repoRoot)) {
       garden["repoRoot"] = repoRoot
     }
-
-    garden["cacheKey"] = cacheKey
 
     const globalDir = join(garden.gardenDirPath, "_global")
     await remove(globalDir)
@@ -252,10 +232,6 @@ export class TestGarden extends Garden {
     } else {
       // No-op: We need to disable this method, because it breaks test cases that manually set configs.
     }
-  }
-
-  override async processTasks(params: Omit<SolveParams, "log"> & { log?: Log }) {
-    return super.processTasks({ ...params, log: params.log || this.log })
   }
 
   /**
@@ -302,15 +278,36 @@ export class TestGarden extends Garden {
    * Public wrapper around this.addActionConfig()
    */
   addAction(config: ActionConfig) {
-    this.addActionConfig(config)
+    this.addRawActionConfig(config)
   }
 
-  setModuleConfigs(moduleConfigs: PartialModuleConfig[]) {
+  /**
+   * Replace all module configs with the one provided.
+   */
+  setPartialModuleConfigs(moduleConfigs: PartialModuleConfig[]) {
+    this.setRawModuleConfigs(moduleConfigs.map(moduleConfigWithDefaults))
+  }
+
+  /**
+   * Same as setModuleConfigs, but do not parse the module configs and apply defaults
+   */
+  setRawModuleConfigs(parsedModuleConfigs: ModuleConfig[]) {
     this.state.configsScanned = true
-    this.moduleConfigs = keyBy(moduleConfigs.map(moduleConfigWithDefaults), "name")
+    this.moduleConfigs = keyBy(parsedModuleConfigs, "name")
   }
 
-  setActionConfigs(actionConfigs: PartialActionConfig[]) {
+  /**
+   * Same as setModuleConfigs, but keeps existing configs. Existing configs with the same name as added configs will be overridden.
+   */
+  overrideRawModuleConfigs(moduleConfigs: PartialModuleConfig[]) {
+    this.state.configsScanned = true
+    this.moduleConfigs = {
+      ...this.moduleConfigs,
+      ...keyBy(moduleConfigs.map(moduleConfigWithDefaults), "name"),
+    }
+  }
+
+  setPartialActionConfigs(actionConfigs: PartialActionConfig[]) {
     this.actionConfigs = {
       Build: {},
       Deploy: {},
@@ -318,7 +315,7 @@ export class TestGarden extends Garden {
       Test: {},
     }
     actionConfigs.forEach((ac) => {
-      this.addActionConfig({
+      const merged: BaseActionConfig = {
         spec: {},
         ...ac,
         // TODO: consider making `timeout` mandatory in `PartialActionConfig`.
@@ -328,11 +325,15 @@ export class TestGarden extends Garden {
           basePath: this.projectRoot,
           ...ac.internal,
         },
-      })
+      }
+      this.addRawActionConfig(
+        // @ts-expect-error todo: correct types for unresolved configs
+        parseTemplateCollection({ value: merged, source: { path: [] } })
+      )
     })
   }
 
-  setWorkflowConfigs(workflowConfigs: WorkflowConfig[]) {
+  setRawWorkflowConfigs(workflowConfigs: WorkflowConfig[]) {
     this.workflowConfigs = keyBy(workflowConfigs, "name")
   }
 
@@ -452,16 +453,31 @@ export class TestGarden extends Garden {
   }
 }
 
-export function expectFuzzyMatch(str: string, sample: string | string[]) {
-  const errorMessageNonAnsi = stripAnsi(str)
+export function expectFuzzyMatch(
+  str: string | undefined | (() => string | undefined),
+  sample: string | string[],
+  extraMessage?: string
+) {
+  const actualErrorMsg = isFunction(str) ? str() : str
+  const actualErrorMsgLowercase = actualErrorMsg ? stripAnsi(actualErrorMsg).toLowerCase() : actualErrorMsg
   const samples = typeof sample === "string" ? [sample] : sample
   const samplesNonAnsi = samples.map(stripAnsi)
-  try {
-    samplesNonAnsi.forEach((s) => expect(errorMessageNonAnsi.toLowerCase()).to.contain(s.toLowerCase()))
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.log("Error message:\n", styles.error(errorMessageNonAnsi), "\n")
-    throw err
+  for (const s of samplesNonAnsi) {
+    const expectedErrorSample = s.toLowerCase()
+
+    const assertionMessage = dedent`
+      Expected string
+
+        '${actualErrorMsgLowercase}'
+
+      to contain string
+
+        '${expectedErrorSample}'
+
+      ${extraMessage || ""}
+    `
+
+    expect(actualErrorMsgLowercase, assertionMessage).to.contain(expectedErrorSample)
   }
 }
 
@@ -507,7 +523,13 @@ export function expectError(fn: Function, assertion: ExpectErrorAssertion = {}) 
 
     if (contains) {
       const errorMessage = (errorMessageGetter || defaultErrorMessageGetter)(err)
-      expectFuzzyMatch(errorMessage, contains)
+      expectFuzzyMatch(
+        errorMessage,
+        contains,
+        dedent`
+          \nOriginal error:
+          ${stripAnsi(toGardenError(err).stack || "<no stack>")}`
+      )
     }
 
     if (message) {

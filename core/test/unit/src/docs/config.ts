@@ -451,10 +451,12 @@ describe("docs config module", () => {
     it("should return a markdown link with a name and relative path", () => {
       class TestKeyDescription extends BaseKeyDescription {
         override deprecated = false
+        override deprecationMessage = undefined
         override experimental = false
         override required = false
         override internal = false
         override description?: string
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         override example?: any
         override type = "string"
 

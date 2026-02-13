@@ -11,7 +11,7 @@ import {
   skopeoDaemonContainerName,
   dockerAuthSecretKey,
   defaultKanikoImageName,
-  getK8sUtilImageName,
+  getK8sUtilImagePath,
 } from "../../constants.js"
 import { KubeApi } from "../../api.js"
 import type { Log } from "../../../../logger/log-entry.js"
@@ -96,7 +96,7 @@ export const kanikoBuild: BuildHandler = async (params) => {
     throw new ConfigurationError({
       message: dedent`
         Unfortunately Kaniko does not support secret build arguments.
-        Garden Cloud Builder and the Kubernetes BuildKit in-cluster builder both support secrets.
+        Garden Container Builder and the Kubernetes BuildKit in-cluster builder both support secrets.
 
         See also https://github.com/GoogleContainerTools/kaniko/issues/3028
       `,
@@ -320,7 +320,7 @@ export function getKanikoBuilderPodManifest({
     initContainers: [
       {
         name: "init",
-        image: getK8sUtilImageName(),
+        image: getK8sUtilImagePath(provider.config.utilImageRegistryDomain),
         command: [
           "/bin/sh",
           "-c",

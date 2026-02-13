@@ -17,11 +17,14 @@ import { joi } from "../../../../src/config/common.js"
 import fsExtra from "fs-extra"
 const { pathExists, remove } = fsExtra
 import cloneDeep from "fast-copy"
-
 import { configTemplateKind, renderTemplateKind } from "../../../../src/config/base.js"
 import type { RenderTemplateConfig } from "../../../../src/config/render-template.js"
 import { renderConfigTemplate } from "../../../../src/config/render-template.js"
 import type { Log } from "../../../../src/logger/log-entry.js"
+import { parseTemplateCollection } from "../../../../src/template/templated-collections.js"
+import { serialiseUnresolvedTemplates, UnresolvedTemplateValue } from "../../../../src/template/types.js"
+import { deepEvaluate } from "../../../../src/template/evaluate.js"
+import { VariablesContext } from "../../../../src/config/template-contexts/variables.js"
 
 describe("config templates", () => {
   let garden: TestGarden
@@ -33,6 +36,7 @@ describe("config templates", () => {
   })
 
   describe("resolveConfigTemplate", () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let defaults: any
 
     before(() => {
@@ -49,12 +53,18 @@ describe("config templates", () => {
     })
 
     it("resolves template strings for fields other than modules and files", async () => {
-      const config: ConfigTemplateResource = {
-        ...defaults,
-        inputsSchemaPath: "${project.name}.json",
-      }
+      const config: ConfigTemplateResource = parseTemplateCollection({
+        value: {
+          ...defaults,
+          inputsSchemaPath: "${project.name}.json",
+        },
+        source: { path: [] },
+      })
       const resolved = await resolveConfigTemplate(garden, config)
       expect(resolved.inputsSchemaPath).to.eql("module-templates.json")
+      expect(resolved.inputsSchemaDefaults).to.eql({
+        test: "hello",
+      })
     })
 
     it("ignores template strings in modules", async () => {
@@ -72,6 +82,7 @@ describe("config templates", () => {
     })
 
     it("throws on an invalid schema", async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const config: any = {
         ...defaults,
         foo: "bar",
@@ -89,9 +100,11 @@ describe("config templates", () => {
         ...defaults,
       }
       const resolved = await resolveConfigTemplate(garden, config)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       expect((<any>resolved.inputsSchema)._rules[0].args.jsonSchema.schema).to.eql({
         type: "object",
         additionalProperties: true,
+        required: [],
       })
     })
 
@@ -144,6 +157,7 @@ describe("config templates", () => {
         inputsSchema: joi.object().keys({
           foo: joi.string(),
         }),
+        inputsSchemaDefaults: {},
         modules: [],
       }
       templates.test = template
@@ -164,29 +178,43 @@ describe("config templates", () => {
     it("resolves template strings on the templated module config", async () => {
       const config: RenderTemplateConfig = {
         ...defaults,
-        inputs: {
-          foo: "${project.name}",
-        },
+        ...parseTemplateCollection({
+          value: {
+            inputs: {
+              foo: "${project.name}",
+            },
+          },
+          source: { path: [] },
+        }),
       }
       const { resolved } = await renderConfigTemplate({ garden, log, config, templates })
-      expect(resolved.inputs?.foo).to.equal("module-templates")
+      expect(resolved.inputs?.foo).to.be.instanceOf(UnresolvedTemplateValue)
+      const evaluated = deepEvaluate(resolved.inputs, { context: garden.getProjectConfigContext(), opts: {} })
+      expect(evaluated).to.be.eql({
+        foo: "module-templates",
+      })
     })
 
-    it("resolves all parent, template and input template strings, ignoring others", async () => {
+    it("resolves core fields like name, but leaves others unresolved, like dependencies and image", async () => {
       const _templates = {
         test: {
           ...template,
-          modules: [
-            {
-              type: "test",
-              name: "${parent.name}-${template.name}-${inputs.foo}",
-              build: {
-                dependencies: [{ name: "${parent.name}-${template.name}-foo", copy: [] }],
-                timeout: DEFAULT_BUILD_TIMEOUT_SEC,
-              },
-              image: "${modules.foo.outputs.bar || inputs.foo}",
+          ...parseTemplateCollection({
+            value: {
+              modules: [
+                {
+                  type: "test",
+                  name: "${parent.name}-${template.name}-${inputs.foo}",
+                  build: {
+                    dependencies: [{ name: "${parent.name}-${template.name}-foo", copy: [] }],
+                    timeout: DEFAULT_BUILD_TIMEOUT_SEC,
+                  },
+                  image: "${modules.foo.outputs.bar || inputs.foo}",
+                },
+              ],
             },
-          ],
+            source: { path: [] },
+          }),
         },
       }
       const config: RenderTemplateConfig = {
@@ -200,11 +228,14 @@ describe("config templates", () => {
       const module = resolved.modules[0]
 
       expect(module.name).to.equal("test-test-bar")
-      expect(module.build.dependencies).to.eql([{ name: "test-test-foo", copy: [] }])
-      expect(module.spec.image).to.equal("${modules.foo.outputs.bar || inputs.foo}")
+      expect(serialiseUnresolvedTemplates(module.build.dependencies)).to.eql([
+        { name: "${parent.name}-${template.name}-foo", copy: [] },
+      ])
+      expect(serialiseUnresolvedTemplates(module.spec.image)).to.equal("${modules.foo.outputs.bar || inputs.foo}")
     })
 
     it("throws if config is invalid", async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const config: any = {
         ...defaults,
         foo: "bar",
@@ -310,12 +341,17 @@ describe("config templates", () => {
       const _templates = {
         test: {
           ...template,
-          modules: [
-            {
-              type: "test",
-              name: "${inputs.foo}",
+          ...parseTemplateCollection({
+            value: {
+              modules: [
+                {
+                  type: "test",
+                  name: "${inputs.foo}",
+                },
+              ],
             },
-          ],
+            source: { path: [] },
+          }),
         },
       }
       const config: RenderTemplateConfig = {
@@ -353,6 +389,7 @@ describe("config templates", () => {
     })
 
     it("throws if an invalid module spec is in the template", async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const _templates: any = {
         test: {
           ...template,
@@ -377,6 +414,7 @@ describe("config templates", () => {
     })
 
     it("throws if a module spec has an invalid name", async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const _templates: any = {
         test: {
           ...template,
@@ -401,21 +439,33 @@ describe("config templates", () => {
     })
 
     it("resolves project variable references in input fields", async () => {
-      const _templates: any = {
+      const _templates = {
         test: {
           ...template,
-          modules: [
-            {
-              type: "test",
-              name: "${inputs.name}-test",
+          ...parseTemplateCollection({
+            value: {
+              modules: [
+                {
+                  type: "test",
+                  name: "${inputs.name}-test",
+                },
+              ],
             },
-          ],
+            source: { path: [] },
+          }),
         },
       }
 
       const config: RenderTemplateConfig = cloneDeep(defaults)
-      config.inputs = { name: "${var.test}" }
-      garden.variables.test = "test-value"
+      config.inputs = parseTemplateCollection({ value: { name: "${var.test}" }, source: { path: [] } })
+      garden.variables = VariablesContext.forTest({
+        garden,
+        variablePrecedence: [
+          {
+            test: "test-value",
+          },
+        ],
+      })
 
       const resolved = await renderConfigTemplate({ garden, log, config, templates: _templates })
 
@@ -423,6 +473,7 @@ describe("config templates", () => {
     })
 
     it("passes through unresolvable template strings in inputs field", async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const _templates: any = {
         test: {
           ...template,
@@ -446,27 +497,37 @@ describe("config templates", () => {
     })
 
     it("throws if an unresolvable template string is used for a templated module name", async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const _templates: any = {
         test: {
           ...template,
-          modules: [
-            {
-              type: "test",
-              name: "${inputs.name}-test",
+          ...parseTemplateCollection({
+            value: {
+              modules: [
+                {
+                  type: "test",
+                  name: "${inputs.name}-module",
+                },
+              ],
             },
-          ],
+            source: { path: [] },
+          }),
         },
       }
 
       const config: RenderTemplateConfig = cloneDeep(defaults)
-      config.inputs = { name: "module-${modules.foo.version}" }
+      config.inputs = parseTemplateCollection({
+        value: { name: "module-${modules.foo.version}" },
+        source: { path: [] },
+      })
 
       await expectError(() => renderConfigTemplate({ garden, log, config, templates: _templates }), {
         contains: [
-          "ConfigTemplate test returned an invalid module (named module-${modules.foo.version}-test) for templated module test",
-          "Error validating module (modules.garden.yml)",
-          'name with value "module-${modules.foo.version}-test" fails to match the required pattern: /^(?!garden)(?=.{1,63}$)[a-z][a-z0-9]*(-[a-z0-9]+)*$/.',
-          "Note that if a template string is used in the name of a module in a template, then the template string must be fully resolvable at the time of module scanning. This means that e.g. references to other modules or runtime outputs cannot be used.",
+          "ConfigTemplate test returned an invalid module (named ${inputs.name}-module) for templated module test",
+          "failed to evaluate template expression at inputs.name",
+          "invalid template string (module-${modules.foo.version}) at path name",
+          "could not find key modules. available keys:",
+          "Note that if a template string is used for the name, kind, type or apiversion of a module in a template, then the template string must be fully resolvable at the time of module scanning. This means that e.g. references to other modules or runtime outputs cannot be used.",
         ],
       })
     })

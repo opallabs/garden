@@ -7,15 +7,13 @@
  */
 
 import { DepGraph } from "dependency-graph"
-import { flatten, merge, uniq } from "lodash-es"
+import { flatten, uniq } from "lodash-es"
 import { get, isEqual, join, set, uniqWith } from "lodash-es"
 import { CircularDependenciesError } from "../exceptions.js"
 import type { GraphNodes, ConfigGraphNode } from "./config-graph.js"
-import { Profile, profileAsync } from "../util/profiling.js"
+import { Profile } from "../util/profiling.js"
 import type { ModuleDependencyGraphNode, ModuleDependencyGraphNodeKind, ModuleGraphNodes } from "./modules.js"
 import type { ActionKind } from "../plugin/action-types.js"
-import { loadVarfile } from "../config/base.js"
-import type { DeepPrimitiveMap, Varfile } from "../config/common.js"
 import type { Task } from "../tasks/base.js"
 import type { LogMetadata, TaskLogStatus } from "../logger/log-entry.js"
 
@@ -139,48 +137,6 @@ interface CycleGraph {
     }
   }
 }
-
-export const getVarfileData = (varfile: Varfile) => {
-  const path = typeof varfile === "string" ? varfile : varfile.path
-  const optional = typeof varfile === "string" ? false : varfile.optional
-  return { path, optional }
-}
-
-export const mergeVariables = profileAsync(async function mergeVariables({
-  basePath,
-  variables,
-  varfiles,
-}: {
-  basePath: string
-  variables?: DeepPrimitiveMap
-  varfiles?: Varfile[]
-}) {
-  const varsByFile = await Promise.all(
-    (varfiles || []).map((varfile) => {
-      const { path, optional } = getVarfileData(varfile)
-      return loadVarfile({
-        configRoot: basePath,
-        path,
-        defaultPath: undefined,
-        optional,
-      })
-    })
-  )
-
-  const output: DeepPrimitiveMap = {}
-
-  if (variables) {
-    merge(output, variables)
-  }
-
-  // Merge different varfiles, later files taking precedence over prior files in the list.
-  // TODO-0.13.0: should this be a JSON merge?
-  for (const vars of varsByFile) {
-    merge(output, vars)
-  }
-
-  return output
-})
 
 /**
  * Implements a variation on the Floyd-Warshall algorithm to compute minimal cycles.

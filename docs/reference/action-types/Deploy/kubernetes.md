@@ -11,7 +11,7 @@ Specify one or more Kubernetes manifests to deploy.
 
 You can either (or both) specify the manifests as part of the `garden.yml` configuration, or you can refer to one or more files with existing manifests.
 
-Note that if you include the manifests in the `garden.yml` file, you can use [template strings](https://docs.garden.io/using-garden/variables-and-templating) to interpolate values into the manifests.
+Note that if you include the manifests in the `garden.yml` file, you can use [template strings](https://docs.garden.io/bonsai-0.13/using-garden/variables-and-templating) to interpolate values into the manifests.
 
 If you need more advanced templating features you can use the [helm](./helm.md) Deploy type.
 
@@ -50,11 +50,9 @@ A description of the action.
 
 By default, the directory where the action is defined is used as the source for the build context.
 
-You can override this by setting either `source.path` to another (POSIX-style) path relative to the action source directory, or `source.repository` to get the source from an external repository.
+You can override the directory that is used for the build context by setting `source.path`.
 
-If using `source.path`, you must make sure the target path is in a git repository.
-
-For `source.repository` behavior, please refer to the [Remote Sources guide](https://docs.garden.io/advanced/using-remote-sources).
+You can use `source.repository` to get the source from an external repository. For more information on remote actions, please refer to the [Remote Sources guide](https://docs.garden.io/bonsai-0.13/advanced/using-remote-sources).
 
 | Type     | Required |
 | -------- | -------- |
@@ -64,7 +62,11 @@ For `source.repository` behavior, please refer to the [Remote Sources guide](htt
 
 [source](#source) > path
 
-A relative POSIX-style path to the source directory for this action. You must make sure this path exists and is in a git repository!
+A relative POSIX-style path to the source directory for this action.
+
+If specified together with `source.repository`, the path will be relative to the repository root.
+
+Otherwise, the path will be relative to the directory containing the Garden configuration file.
 
 | Type        | Required |
 | ----------- | -------- |
@@ -150,7 +152,7 @@ For actions other than _Build_ actions, this is usually not necessary to specify
 
 _Build_ actions have a different behavior, since they generally are based on some files in the source tree, so please reference the docs for more information on those.
 
-Note that you can also _exclude_ files using the `exclude` field or by placing `.gardenignore` files in your source tree, which use the same format as `.gitignore` files. See the [Configuration Files guide](https://docs.garden.io/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
+Note that you can also _exclude_ files using the `exclude` field or by placing `.gardenignore` files in your source tree, which use the same format as `.gitignore` files. See the [Configuration Files guide](https://docs.garden.io/bonsai-0.13/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
 
 | Type               | Required |
 | ------------------ | -------- |
@@ -168,7 +170,7 @@ include:
 
 Specify a list of POSIX-style paths or glob patterns that should be explicitly excluded from the action's version.
 
-For actions other than _Build_ actions, this is usually not necessary to specify, or is implicitly inferred. For _Deploy_, _Run_ and _Test_ actions, the exclusions specified here only applied on top of explicitly set `include` paths, or such paths inferred by providers. See the [Configuration Files guide](https://docs.garden.io/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
+For actions other than _Build_ actions, this is usually not necessary to specify, or is implicitly inferred. For _Deploy_, _Run_ and _Test_ actions, the exclusions specified here only applied on top of explicitly set `include` paths, or such paths inferred by providers. See the [Configuration Files guide](https://docs.garden.io/bonsai-0.13/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
 
 Unlike the `scan.exclude` field in the project config, the filters here have _no effect_ on which files and directories are watched for changes when watching is enabled. Use the project `scan.exclude` field to affect those, if you have large directories that should not be watched for changes.
 
@@ -282,6 +284,10 @@ Timeout for the deploy to complete, in seconds.
 ### `spec.files[]`
 
 [spec](#spec) > files
+
+{% hint style="warning" %}
+**Deprecated**: `spec.files` in `kubernetes` Deploy actions will be removed in Garden 0.14. Use `spec.manifestTemplates` and/or `spec.manifestFiles` instead.
+{% endhint %}
 
 POSIX-style paths to YAML files to load manifests from. Each can contain multiple manifests, and can include any Garden template strings, which will be resolved before applying the manifests.
 
@@ -524,9 +530,9 @@ Additional arguments to pass to `kubectl apply`.
 
 Wait until the jobs have been completed. Garden will wait for as long as `timeout`.
 
-| Type      | Default | Required |
-| --------- | ------- | -------- |
-| `boolean` | `false` | No       |
+| Type      | Required |
+| --------- | -------- |
+| `boolean` | No       |
 
 ### `spec.defaultTarget`
 
@@ -808,7 +814,7 @@ spec:
 
 [spec](#spec) > [sync](#specsync) > [paths](#specsyncpaths) > mode
 
-The sync mode to use for the given paths. See the [Code Synchronization guide](https://docs.garden.io/guides/code-synchronization) for details.
+The sync mode to use for the given paths. See the [Code Synchronization guide](https://docs.garden.io/bonsai-0.13/guides/code-synchronization) for details.
 
 | Type     | Allowed Values                                                                                                                            | Default          | Required |
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ---------------- | -------- |
@@ -948,6 +954,10 @@ Override the image of the matched container.
 
 [spec](#spec) > localMode
 
+{% hint style="warning" %}
+**Deprecated**: The local mode will be removed in the next major version of Garden, 0.14.
+{% endhint %}
+
 [EXPERIMENTAL] Configures the local application which will send and receive network requests instead of the target resource specified by `localMode.target` or `defaultTarget`. One of those fields must be specified to enable local mode for the action.
 
 The selected container of the target Kubernetes resource will be replaced by a proxy container which runs an SSH server to proxy requests.
@@ -958,7 +968,7 @@ Local mode always takes the precedence over sync mode if there are any conflicti
 
 Health checks are disabled for services running in local mode.
 
-See the [Local Mode guide](https://docs.garden.io/guides/running-service-in-local-mode) for more information.
+See the [Local Mode guide](https://docs.garden.io/bonsai-0.13/guides/running-service-in-local-mode) for more information.
 
 Note! This feature is still experimental. Some incompatible changes can be made until the first non-experimental release.
 
@@ -970,6 +980,10 @@ Note! This feature is still experimental. Some incompatible changes can be made 
 
 [spec](#spec) > [localMode](#speclocalmode) > ports
 
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
+
 The reverse port-forwards configuration for the local application.
 
 | Type            | Required |
@@ -979,6 +993,10 @@ The reverse port-forwards configuration for the local application.
 ### `spec.localMode.ports[].local`
 
 [spec](#spec) > [localMode](#speclocalmode) > [ports](#speclocalmodeports) > local
+
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
 
 The local port to be used for reverse port-forward.
 
@@ -990,6 +1008,10 @@ The local port to be used for reverse port-forward.
 
 [spec](#spec) > [localMode](#speclocalmode) > [ports](#speclocalmodeports) > remote
 
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
+
 The remote port to be used for reverse port-forward.
 
 | Type     | Required |
@@ -999,6 +1021,10 @@ The remote port to be used for reverse port-forward.
 ### `spec.localMode.command[]`
 
 [spec](#spec) > [localMode](#speclocalmode) > command
+
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
 
 The command to run the local application. If not present, then the local application should be started manually.
 
@@ -1010,6 +1036,10 @@ The command to run the local application. If not present, then the local applica
 
 [spec](#spec) > [localMode](#speclocalmode) > restart
 
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
+
 Specifies restarting policy for the local application. By default, the local application will be restarting infinitely with 1000ms between attempts.
 
 | Type     | Default                         | Required |
@@ -1019,6 +1049,10 @@ Specifies restarting policy for the local application. By default, the local app
 ### `spec.localMode.restart.delayMsec`
 
 [spec](#spec) > [localMode](#speclocalmode) > [restart](#speclocalmoderestart) > delayMsec
+
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
 
 Delay in milliseconds between the local application restart attempts. The default value is 1000ms.
 
@@ -1030,6 +1064,10 @@ Delay in milliseconds between the local application restart attempts. The defaul
 
 [spec](#spec) > [localMode](#speclocalmode) > [restart](#speclocalmoderestart) > max
 
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
+
 Max number of the local application restarts. Unlimited by default.
 
 | Type     | Default | Required |
@@ -1039,6 +1077,10 @@ Max number of the local application restarts. Unlimited by default.
 ### `spec.localMode.target`
 
 [spec](#spec) > [localMode](#speclocalmode) > target
+
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
 
 The remote Kubernetes resource to proxy traffic from. If specified, this is used instead of `defaultTarget`.
 
@@ -1050,6 +1092,10 @@ The remote Kubernetes resource to proxy traffic from. If specified, this is used
 
 [spec](#spec) > [localMode](#speclocalmode) > [target](#speclocalmodetarget) > kind
 
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
+
 The kind of Kubernetes resource to find.
 
 | Type     | Allowed Values                           | Required |
@@ -1059,6 +1105,10 @@ The kind of Kubernetes resource to find.
 ### `spec.localMode.target.name`
 
 [spec](#spec) > [localMode](#speclocalmode) > [target](#speclocalmodetarget) > name
+
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
 
 The name of the resource, of the specified `kind`. If specified, you must also specify `kind`.
 
@@ -1070,6 +1120,10 @@ The name of the resource, of the specified `kind`. If specified, you must also s
 
 [spec](#spec) > [localMode](#speclocalmode) > [target](#speclocalmodetarget) > podSelector
 
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
+
 A map of string key/value labels to match on any Pods in the namespace. When specified, a random ready Pod with matching labels will be picked as a target, so make sure the labels will always match a specific Pod type.
 
 | Type     | Required |
@@ -1080,11 +1134,35 @@ A map of string key/value labels to match on any Pods in the namespace. When spe
 
 [spec](#spec) > [localMode](#speclocalmode) > [target](#speclocalmodetarget) > containerName
 
+{% hint style="warning" %}
+**Deprecated**: This field will be removed in a future release.
+{% endhint %}
+
 The name of a container in the target. Specify this if the target contains more than one container and the main container is not the first container in the spec.
 
 | Type     | Required |
 | -------- | -------- |
 | `string` | No       |
+
+### `spec.manifestFiles[]`
+
+[spec](#spec) > manifestFiles
+
+POSIX-style paths to YAML files to load manifests from. Garden will *not* use the Garden Template Language to transform manifests in these files. Each file can contain multiple manifests.
+
+| Type               | Default | Required |
+| ------------------ | ------- | -------- |
+| `array[posixPath]` | `[]`    | No       |
+
+### `spec.manifestTemplates[]`
+
+[spec](#spec) > manifestTemplates
+
+POSIX-style paths to YAML files to load manifests from. Each can contain multiple manifests, and can include any Garden template strings, which will be resolved before applying the manifests.
+
+| Type               | Default | Required |
+| ------------------ | ------- | -------- |
+| `array[posixPath]` | `[]`    | No       |
 
 
 ## Outputs

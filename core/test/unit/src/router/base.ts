@@ -21,6 +21,7 @@ import { expectError, getDefaultProjectConfig, makeTempGarden } from "../../../h
 import { getRouterTestData } from "./_helpers.js"
 
 describe("BaseActionRouter", () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const testHandler = (params: PluginBuildActionParamsBase<any>) => {
     return {
       detail: {
@@ -31,7 +32,7 @@ describe("BaseActionRouter", () => {
         base: {
           pluginName: params.base?.pluginName,
         },
-        projectName: params.ctx.resolveTemplateStrings("${project.name}"),
+        projectName: params.ctx.legacyResolveTemplateString("${project.name}"),
       },
       state: "ready" as const,
     }
@@ -123,6 +124,7 @@ describe("BaseActionRouter", () => {
       expect(handler.handlerType).to.equal("getOutputs")
       expect(handler.actionType).to.equal("test")
       expect(handler.pluginName).to.equal("_default")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       expect(await (handler as any)()).to.equal(defaultHandlerOutput, "it should return the defined default handler")
     })
 
@@ -458,7 +460,7 @@ describe("BaseActionRouter", () => {
 
       const { garden, router } = await createTestRouter([plugin])
 
-      garden.setActionConfigs([
+      garden.setPartialActionConfigs([
         {
           kind: "Build",
           type: "test",
@@ -497,7 +499,7 @@ describe("BaseActionRouter", () => {
 
       const { garden, router } = await createTestRouter([plugin])
 
-      garden.setActionConfigs([
+      garden.setPartialActionConfigs([
         {
           kind: "Build",
           type: "test",
@@ -552,7 +554,7 @@ describe("BaseActionRouter", () => {
 
       const { garden, router } = await createTestRouter([base, plugin])
 
-      garden.setActionConfigs([
+      garden.setPartialActionConfigs([
         {
           kind: "Build",
           type: "test",
@@ -592,7 +594,7 @@ describe("BaseActionRouter", () => {
 
       const { garden, router } = await createTestRouter([plugin])
 
-      garden.setActionConfigs([
+      garden.setPartialActionConfigs([
         {
           kind: "Build",
           type: "test",

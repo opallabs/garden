@@ -76,9 +76,7 @@ description:
 # based on, for example, the current environment or other variables (e.g. `disabled: ${environment.name == "prod"}`).
 # This can be handy when you only need certain modules for specific environments, e.g. only for development.
 #
-# Disabling a module means that any services, tasks and tests contained in it will not be deployed or run. It also
-# means that the module is not built _unless_ it is declared as a build dependency by another enabled module (in which
-# case building this module is necessary for the dependant to be built).
+# Disabling a module means that any services, tasks and tests contained in it will not be build, deployed or run.
 #
 # If you disable the module, and its services, tasks or tests are referenced as _runtime_ dependencies, Garden will
 # automatically ignore those dependency declarations. Note however that template strings referencing the module's
@@ -92,8 +90,8 @@ disabled: false
 #
 # Note that you can also _exclude_ files using the `exclude` field or by placing `.gardenignore` files in your source
 # tree, which use the same format as `.gitignore` files. See the [Configuration Files
-# guide](https://docs.garden.io/using-garden/configuration-overview#including-excluding-files-and-directories) for
-# details.
+# guide](https://docs.garden.io/bonsai-0.13/using-garden/configuration-overview#including-excluding-files-and-directories)
+# for details.
 #
 # Also note that specifying an empty list here means _no sources_ should be included.
 include:
@@ -104,7 +102,8 @@ include:
 #
 # Note that you can also explicitly _include_ files using the `include` field. If you also specify the `include`
 # field, the files/patterns specified here are filtered from the files matched by `include`. See the [Configuration
-# Files guide](https://docs.garden.io/using-garden/configuration-overview#including-excluding-files-and-directories)
+# Files
+# guide](https://docs.garden.io/bonsai-0.13/using-garden/configuration-overview#including-excluding-files-and-directories)
 # for details.
 #
 # Unlike the `scan.exclude` field in the project config, the filters here have _no effect_ on which files and
@@ -190,6 +189,16 @@ createStack: false
 # Specify the path to the Pulumi project root, relative to the deploy action's root.
 root: .
 
+# If set to true, the deploy action will use the new Pulumi varfile schema, which does not nest all variables under
+# the 'config' key automatically like the old schema. This allow setting variables at the root level of the varfile
+# that don't belong to the 'config' key. Example:
+# config:
+#   myVar: value
+# secretsprovider: gcpkms://projects/xyz/locations/global/keyRings/pulumi/cryptoKeys/pulumi-secrets
+# For more information see [this guide on pulumi varfiles and
+# variables](https://docs.garden.io/pulumi-plugin/about#pulumi-varfile-schema)
+useNewPulumiVarfileSchema: false
+
 # A map of config variables to use when applying the stack. These are merged with the contents of any `pulumiVarfiles`
 # provided
 # for this deploy action. The deploy action's stack config will be overwritten with the resulting merged config.
@@ -203,7 +212,7 @@ root: .
 # Instead, use pulumi stack references when using the `cacheStatus` config option.
 pulumiVariables: {}
 
-# Specify one or more paths (relative to the deploy action's root) to YAML files containing pulumi config variables.
+# Specify one or more paths (relative to the deploy action's root) to YAML files containing pulumi configuration.
 #
 # Templated paths that resolve to `null`, `undefined` or an empty string are ignored.
 #
@@ -214,8 +223,8 @@ pulumiVariables: {}
 #
 # If one or more varfiles is not found, no error is thrown (that varfile path is simply ignored).
 #
-# Note: There is no need to nest the variables under a `config` field as is done in a pulumi
-# config. Simply specify all the config variables at the top level.
+# Note: The old varfile schema nests all variables under the 'config' key automatically. If you need to set variables
+# at the root level of the varfile that don't belong to the 'config' key, set `useNewPulumiVarfileSchema` to true.
 pulumiVarfiles: []
 
 # The name of the pulumi organization to use. Overrides the `orgName` set on the pulumi provider (if any).
@@ -255,6 +264,12 @@ deployFromPreview: false
 
 # The name of the pulumi stack to use. Defaults to the current environment name.
 stack:
+
+# When set to true, stack outputs which are marked as secrets will be shown in the output.
+#
+# By default, Pulumi will print secret stack outputs as the string '[secret]' instead of
+# the true content of the output.
+showSecretsInOutput: false
 ```
 
 ## Configuration Keys
@@ -401,7 +416,7 @@ A description of the module.
 
 Set this to `true` to disable the module. You can use this with conditional template strings to disable modules based on, for example, the current environment or other variables (e.g. `disabled: ${environment.name == "prod"}`). This can be handy when you only need certain modules for specific environments, e.g. only for development.
 
-Disabling a module means that any services, tasks and tests contained in it will not be deployed or run. It also means that the module is not built _unless_ it is declared as a build dependency by another enabled module (in which case building this module is necessary for the dependant to be built).
+Disabling a module means that any services, tasks and tests contained in it will not be build, deployed or run.
 
 If you disable the module, and its services, tasks or tests are referenced as _runtime_ dependencies, Garden will automatically ignore those dependency declarations. Note however that template strings referencing the module's service or task outputs (i.e. runtime outputs) will fail to resolve when the module is disabled, so you need to make sure to provide alternate values for those if you're using them, using conditional expressions.
 
@@ -413,7 +428,7 @@ If you disable the module, and its services, tasks or tests are referenced as _r
 
 Specify a list of POSIX-style paths or globs that should be regarded as the source files for this module. Files that do *not* match these paths or globs are excluded when computing the version of the module, when responding to filesystem watch events, and when staging builds.
 
-Note that you can also _exclude_ files using the `exclude` field or by placing `.gardenignore` files in your source tree, which use the same format as `.gitignore` files. See the [Configuration Files guide](https://docs.garden.io/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
+Note that you can also _exclude_ files using the `exclude` field or by placing `.gardenignore` files in your source tree, which use the same format as `.gitignore` files. See the [Configuration Files guide](https://docs.garden.io/bonsai-0.13/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
 
 Also note that specifying an empty list here means _no sources_ should be included.
 
@@ -433,7 +448,7 @@ include:
 
 Specify a list of POSIX-style paths or glob patterns that should be excluded from the module. Files that match these paths or globs are excluded when computing the version of the module, when responding to filesystem watch events, and when staging builds.
 
-Note that you can also explicitly _include_ files using the `include` field. If you also specify the `include` field, the files/patterns specified here are filtered from the files matched by `include`. See the [Configuration Files guide](https://docs.garden.io/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
+Note that you can also explicitly _include_ files using the `include` field. If you also specify the `include` field, the files/patterns specified here are filtered from the files matched by `include`. See the [Configuration Files guide](https://docs.garden.io/bonsai-0.13/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
 
 Unlike the `scan.exclude` field in the project config, the filters here have _no effect_ on which files and directories are watched for changes. Use the project `scan.exclude` field to affect those, if you have large directories that should not be watched for changes.
 
@@ -601,6 +616,22 @@ Specify the path to the Pulumi project root, relative to the deploy action's roo
 | ----------- | ------- | -------- |
 | `posixPath` | `"."`   | No       |
 
+### `useNewPulumiVarfileSchema`
+
+If set to true, the deploy action will use the new Pulumi varfile schema, which does not nest all variables under
+the 'config' key automatically like the old schema. This allow setting variables at the root level of the varfile
+that don't belong to the 'config' key. Example:
+```
+config:
+  myVar: value
+secretsprovider: gcpkms://projects/xyz/locations/global/keyRings/pulumi/cryptoKeys/pulumi-secrets
+```
+For more information see [this guide on pulumi varfiles and variables](https://docs.garden.io/pulumi-plugin/about#pulumi-varfile-schema)
+
+| Type      | Default | Required |
+| --------- | ------- | -------- |
+| `boolean` | `false` | No       |
+
 ### `pulumiVariables`
 
 A map of config variables to use when applying the stack. These are merged with the contents of any `pulumiVarfiles` provided
@@ -618,7 +649,7 @@ Instead, use pulumi stack references when using the `cacheStatus` config option.
 
 ### `pulumiVarfiles[]`
 
-Specify one or more paths (relative to the deploy action's root) to YAML files containing pulumi config variables.
+Specify one or more paths (relative to the deploy action's root) to YAML files containing pulumi configuration.
 
 Templated paths that resolve to `null`, `undefined` or an empty string are ignored.
 
@@ -629,8 +660,8 @@ value type.
 
 If one or more varfiles is not found, no error is thrown (that varfile path is simply ignored).
 
-Note: There is no need to nest the variables under a `config` field as is done in a pulumi
-config. Simply specify all the config variables at the top level.
+Note: The old varfile schema nests all variables under the 'config' key automatically. If you need to set variables
+at the root level of the varfile that don't belong to the 'config' key, set `useNewPulumiVarfileSchema` to true.
 
 | Type               | Default | Required |
 | ------------------ | ------- | -------- |
@@ -706,6 +737,17 @@ The name of the pulumi stack to use. Defaults to the current environment name.
 | Type     | Required |
 | -------- | -------- |
 | `string` | No       |
+
+### `showSecretsInOutput`
+
+When set to true, stack outputs which are marked as secrets will be shown in the output.
+
+By default, Pulumi will print secret stack outputs as the string '[secret]' instead of
+the true content of the output.
+
+| Type      | Default | Required |
+| --------- | ------- | -------- |
+| `boolean` | `false` | No       |
 
 
 ## Outputs

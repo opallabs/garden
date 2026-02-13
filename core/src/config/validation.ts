@@ -10,9 +10,8 @@ import type Joi from "@hapi/joi"
 import { ConfigurationError } from "../exceptions.js"
 import { relative } from "path"
 import { uuidv4 } from "../util/random.js"
-import { profile } from "../util/profiling.js"
 import type { BaseGardenResource, ObjectPath, YamlDocumentWithSource } from "./base.js"
-import type { ParsedNode, Range } from "yaml"
+import type { ParsedNode } from "yaml"
 import { padEnd } from "lodash-es"
 import { styles } from "../logger/styles.js"
 
@@ -41,8 +40,8 @@ const joiOptions: Joi.ValidationOptions = {
 }
 
 export interface ConfigSource {
+  path: ObjectPath
   yamlDoc?: YamlDocumentWithSource
-  basePath?: ObjectPath
 }
 
 export interface ValidateOptions {
@@ -51,8 +50,8 @@ export interface ValidateOptions {
   source?: ConfigSource
 }
 
-export interface ValidateWithPathParams<T> {
-  config: T
+export interface ValidateWithPathParams {
+  config: unknown
   schema: Joi.Schema
   path: string // Absolute path to the config file, including filename
   projectRoot: string
@@ -68,7 +67,7 @@ export interface ValidateWithPathParams<T> {
  *
  * This is to ensure consistent error messages that include the relative path to the failing file.
  */
-export const validateWithPath = profile(function $validateWithPath<T>({
+export function validateWithPath<T>({
   config,
   schema,
   path,
@@ -77,7 +76,7 @@ export const validateWithPath = profile(function $validateWithPath<T>({
   configType,
   ErrorClass,
   source,
-}: ValidateWithPathParams<T>) {
+}: ValidateWithPathParams) {
   const context =
     `${configType} ${name ? `'${name}' ` : ""}` +
     `${path && projectRoot !== path ? "(" + relative(projectRoot, path) + ")" : ""}`
@@ -92,17 +91,17 @@ export const validateWithPath = profile(function $validateWithPath<T>({
   }
 
   return <T>validateSchema(config, schema, validateOpts)
-})
+}
 
-export interface ValidateConfigParams<T extends BaseGardenResource> {
-  config: T
+export interface ValidateConfigParams {
+  config: BaseGardenResource
   schema: Joi.Schema
   projectRoot: string
   yamlDocBasePath: ObjectPath
   ErrorClass?: typeof ConfigurationError
 }
 
-export function validateConfig<T extends BaseGardenResource>(params: ValidateConfigParams<T>): T {
+export function validateConfig<T extends BaseGardenResource>(params: ValidateConfigParams): T {
   const { config, schema, projectRoot, ErrorClass, yamlDocBasePath } = params
 
   const { name, kind } = config
@@ -114,13 +113,13 @@ export function validateConfig<T extends BaseGardenResource>(params: ValidateCon
 
   return <T>validateSchema(config, schema, {
     context: context.trim(),
-    source: config.internal.yamlDoc ? { yamlDoc: config.internal.yamlDoc, basePath: yamlDocBasePath } : undefined,
+    source: config.internal.yamlDoc ? { yamlDoc: config.internal.yamlDoc, path: yamlDocBasePath } : undefined,
     ErrorClass,
   })
 }
 
-export const validateSchema = profile(function $validateSchema<T>(
-  value: T,
+export function validateSchema<T>(
+  value: unknown,
   schema: Joi.Schema,
   { source, context = "", ErrorClass = ConfigurationError }: ValidateOptions = {}
 ): T {
@@ -131,9 +130,7 @@ export const validateSchema = profile(function $validateSchema<T>(
     return result.value
   }
 
-  const yamlDoc = source?.yamlDoc
-  const rawYaml = yamlDoc?.source
-  const yamlBasePath = source?.basePath || []
+  const yamlBasePath = source?.path || []
 
   const errorDetails = error.details.map((e) => {
     e.message =
@@ -141,15 +138,16 @@ export const validateSchema = profile(function $validateSchema<T>(
         ? improveZodValidationErrorMessage(e, yamlBasePath)
         : improveJoiValidationErrorMessage(e, schema, yamlBasePath)
 
-    const node = yamlDoc?.getIn([...yamlBasePath, ...e.path], true) as ParsedNode | undefined
-    const range = node?.range
-
-    if (rawYaml && yamlDoc?.contents && range) {
-      try {
-        e.message = addYamlContext({ rawYaml, range, message: e.message })
-      } catch {
-        // ignore
-      }
+    try {
+      e.message = addYamlContext({
+        source: {
+          ...source,
+          path: [...yamlBasePath, ...e.path],
+        },
+        message: e.message,
+      })
+    } catch {
+      // ignore
     }
 
     return e
@@ -168,7 +166,7 @@ export const validateSchema = profile(function $validateSchema<T>(
   throw new ErrorClass({
     message: `${msgPrefix}:\n\n${errorDescription}`,
   })
-})
+}
 
 export interface ArtifactSpec {
   source: string
@@ -219,43 +217,71 @@ function improveZodValidationErrorMessage(item: Joi.ValidationErrorItem, yamlBas
   }
 }
 
-function addYamlContext({ rawYaml, range, message }: { rawYaml: string; range: Range; message: string }): string {
-  // Get one line before the error location start, and the line including the error location end
-  const toStart = rawYaml.slice(0, range[0])
-  const lineNumber = toStart.split("\n").length + 1
-  let snippetLines = 1
-
-  const errorLineStart = toStart.lastIndexOf("\n") + 1
-
-  let snippetStart = errorLineStart
-  if (snippetStart > 0) {
-    snippetStart = rawYaml.slice(0, snippetStart - 1).lastIndexOf("\n") + 1
-  }
-  if (snippetStart === 0) {
-    snippetStart = errorLineStart
-  } else {
-    snippetLines++
+export function getYamlContext(source: ConfigSource): string | undefined {
+  const { yamlDoc, path } = source
+  if (!yamlDoc) {
+    return undefined
   }
 
-  const snippetEnd = rawYaml.indexOf("\n", range[1] - 1) || rawYaml.length
+  const node = yamlDoc.getIn(path, true) as ParsedNode | undefined
+  const range = node?.range
+  const rawYaml = yamlDoc.source
 
-  const linePrefixLength = lineNumber.toString().length + 2
-  let snippet = rawYaml
-    .slice(snippetStart, snippetEnd)
-    .trimEnd()
-    .split("\n")
-    .map(
-      (l, i) =>
-        styles.primary(padEnd("" + (lineNumber - snippetLines + i), linePrefixLength) + "| ") + styles.highlight(l)
-    )
-    .join("\n")
-
-  if (snippetStart > 0) {
-    snippet = styles.primary("...\n") + snippet
+  if (!node || !range || !rawYaml) {
+    return undefined
   }
 
-  const errorLineOffset = range[0] - errorLineStart + linePrefixLength + 2
-  const marker = styles.error("-".repeat(errorLineOffset)) + styles.error.bold("^")
+  try {
+    // Get one line before the error location start, and the line including the error location end
+    const toStart = rawYaml.slice(0, range[0])
+    const lineNumber = toStart.split("\n").length + 1
+    let snippetLines = 1
 
-  return `${snippet}\n${marker}\n${styles.error.bold(message)}`
+    const errorLineStart = toStart.lastIndexOf("\n") + 1
+
+    let snippetStart = errorLineStart
+    if (snippetStart > 0) {
+      snippetStart = rawYaml.slice(0, snippetStart - 1).lastIndexOf("\n") + 1
+    }
+    if (snippetStart === 0) {
+      snippetStart = errorLineStart
+    } else {
+      snippetLines++
+    }
+
+    const snippetEnd = rawYaml.indexOf("\n", range[1] - 1) || rawYaml.length
+
+    const linePrefixLength = lineNumber.toString().length + 2
+    let snippet = rawYaml
+      .slice(snippetStart, snippetEnd)
+      .trimEnd()
+      .split("\n")
+      .map(
+        (l, i) =>
+          styles.primary(padEnd("" + (lineNumber - snippetLines + i), linePrefixLength) + "| ") + styles.highlight(l)
+      )
+      .join("\n")
+
+    if (snippetStart > 0) {
+      snippet = styles.primary("...\n") + snippet
+    }
+
+    const errorLineOffset = range[0] - errorLineStart + linePrefixLength + 2
+    const marker = styles.error("-".repeat(errorLineOffset)) + styles.error.bold("^")
+
+    return `${yamlDoc.filename ? `${styles.secondary(`${yamlDoc.filename}:${lineNumber - (snippetLines - 1)}`)}\n` : ""}${snippet}\n${marker}`
+  } catch {
+    // ignore
+  }
+
+  return undefined
+}
+
+export function addYamlContext({ source, message }: { source: ConfigSource; message: string }): string {
+  const yamlContext = getYamlContext(source)
+  if (!yamlContext) {
+    return message
+  }
+
+  return `${yamlContext}\n${styles.error.bold(message)}`
 }

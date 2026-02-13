@@ -87,7 +87,11 @@ export async function getAllPods(
         }
 
         if (isWorkload(resource)) {
-          return getWorkloadPods(api, resource.metadata?.namespace || defaultNamespace, <KubernetesWorkload>resource)
+          return getWorkloadPods({
+            api,
+            namespace: resource.metadata?.namespace || defaultNamespace,
+            resource: <KubernetesWorkload>resource,
+          })
         }
 
         return []
@@ -163,14 +167,24 @@ export async function getCurrentWorkloadPods(
   namespace: string,
   resource: KubernetesWorkload | KubernetesPod
 ) {
-  return deduplicatePodsByLabel(await getWorkloadPods(api, namespace, resource))
+  return deduplicatePodsByLabel(await getWorkloadPods({ api, namespace, resource }))
 }
 
 /**
  * Retrieve a list of pods based on the given resource/manifest. If passed a Pod manifest, it's read from the
  * remote namespace and returned directly.
+ *
+ * In the case of Deployments, only the pods belonging the latest ReplicaSet are returned.
  */
-export async function getWorkloadPods(api: KubeApi, namespace: string, resource: KubernetesWorkload | KubernetesPod) {
+export async function getWorkloadPods({
+  api,
+  namespace,
+  resource,
+}: {
+  api: KubeApi
+  namespace: string
+  resource: KubernetesWorkload | KubernetesPod
+}) {
   if (isPodResource(resource)) {
     return [
       await api.core.readNamespacedPod({
@@ -200,8 +214,7 @@ export async function getWorkloadPods(api: KubeApi, namespace: string, resource:
 
     const sorted = sortBy(replicaSets, (r) => r.metadata.creationTimestamp!)
     const currentReplicaSet = sorted[replicaSets.length - 1]
-
-    return pods.filter((pod) => pod.metadata.name.startsWith(currentReplicaSet.metadata.name))
+    return pods.filter((p) => p.metadata.name.startsWith(currentReplicaSet.metadata.name))
   } else {
     return pods
   }
@@ -422,17 +435,13 @@ export async function upsertConfigMap({
   }
 
   try {
-    await api.core.createNamespacedConfigMap({ namespace, body: <any>body })
+    await api.core.createNamespacedConfigMap({ namespace, body })
   } catch (err) {
     if (!(err instanceof KubernetesError)) {
       throw err
     }
     if (err.responseStatusCode === 409) {
-      await api.core.patchNamespacedConfigMap({
-        name: key,
-        namespace,
-        body,
-      })
+      await api.core.patchNamespacedConfigMap({ name: key, namespace, body })
     } else {
       throw err
     }
@@ -450,8 +459,8 @@ export async function upsertConfigMap({
  * becomes
  * `[{ metadata: { name: a }}, { metadata: { name: b }}, { metadata: { name: b }}]`
  */
-export function flattenResources(resources: KubernetesResource[]) {
-  return flatten(resources.map((r: any) => (r.apiVersion === "v1" && r.kind === "List" ? r.items : [r])))
+export function flattenResources(resources: KubernetesResource[]): KubernetesResource[] {
+  return flatten(resources.map((r: KubernetesResource) => (r.apiVersion === "v1" && r.kind === "List" ? r.items : [r])))
 }
 
 /**
@@ -497,7 +506,7 @@ export async function getRunningDeploymentPod({
   namespace: string
 }) {
   const resource = await api.apps.readNamespacedDeployment({ name: deploymentName, namespace })
-  const pods = await getWorkloadPods(api, namespace, resource)
+  const pods = await getWorkloadPods({ api, namespace, resource })
   const pod = sample(pods.filter((p) => checkPodStatus(p) === "ready"))
   if (!pod) {
     throw new PluginError({
@@ -793,10 +802,10 @@ export function getK8sProvider(providers: ProviderMap): KubernetesProvider {
   return provider as KubernetesProvider
 }
 
-export function renderPodEvents(events: CoreV1Event[]): string {
+export function renderWorkloadEvents(events: CoreV1Event[], workloadKind: string, workloadName: string): string {
   let text = ""
 
-  text += `${styles.accent("━━━ Events ━━━")}\n`
+  text += `${styles.accent(`━━━ Latest events from ${workloadKind} ${workloadName} ━━━`)}\n`
   for (const event of events) {
     const obj = event.involvedObject
     const name = styles.highlight(`${obj.kind} ${obj.name}:`)
@@ -811,7 +820,7 @@ export function renderPodEvents(events: CoreV1Event[]): string {
   }
 
   if (events.length === 0) {
-    text += `${styles.error("No matching events found")}\n`
+    text += `${styles.error("<No events found>")}\n`
   }
 
   return text

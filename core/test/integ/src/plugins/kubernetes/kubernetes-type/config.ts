@@ -7,7 +7,6 @@
  */
 
 import { expect } from "chai"
-import cloneDeep from "fast-copy"
 
 import type { TestGarden } from "../../../../../helpers.js"
 import { getDataDir, makeTestGarden } from "../../../../../helpers.js"
@@ -20,6 +19,9 @@ import {
   DEFAULT_RUN_TIMEOUT_SEC,
   DEFAULT_TEST_TIMEOUT_SEC,
 } from "../../../../../../src/constants.js"
+import { serialiseUnresolvedTemplates } from "../../../../../../src/template/types.js"
+import { parseTemplateCollection } from "../../../../../../src/template/templated-collections.js"
+import type { ActionConfig } from "../../../../../../src/actions/types.js"
 
 describe("configureKubernetesModule", () => {
   let garden: TestGarden
@@ -28,15 +30,19 @@ describe("configureKubernetesModule", () => {
   before(async () => {
     garden = await getKubernetesTestGarden()
     await garden.resolveModules({ log: garden.log })
-    moduleConfigs = cloneDeep((<any>garden).moduleConfigs)
+    moduleConfigs = { ...garden.moduleConfigs }
   })
 
   afterEach(() => {
-    garden["moduleConfigs"] = cloneDeep(moduleConfigs)
+    garden.moduleConfigs = { ...moduleConfigs }
   })
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function patchModuleConfig(name: string, patch: any) {
-    apply((<any>garden).moduleConfigs[name], patch)
+    const moduleConfig = serialiseUnresolvedTemplates(garden.moduleConfigs[name]) as ModuleConfig
+    apply(moduleConfig, patch)
+    // @ts-expect-error todo: correct types for unresolved configs
+    garden.moduleConfigs[name] = parseTemplateCollection({ value: moduleConfig, source: { path: [] } })
   }
 
   it("should validate a Kubernetes module", async () => {
@@ -74,9 +80,11 @@ describe("configureKubernetesModule", () => {
             dependencies: [],
             timeout: DEFAULT_BUILD_TIMEOUT_SEC,
           },
-          waitForJobs: false,
+          // this field is not defined in KubernetesServiceSpec and seems to be unused
+          // the default value was coming from kubernetesCommonDeploySpecKeys
+          // waitForJobs: false,
           dependencies: [],
-          files: [],
+          files: [], // module configa only have old `files` field
           manifests: [
             {
               apiVersion: "apps/v1",
@@ -158,7 +166,8 @@ describe("configureKubernetesModule", () => {
     ])
   })
 
-  it("should set include to equal files if neither include nor exclude has been set", async () => {
+  it("should set include to equal manifestTemplates if neither include nor exclude has been set", async () => {
+    // module config only have old `files` field
     patchModuleConfig("module-simple", { spec: { files: ["manifest.yaml"] } })
     const configInclude = await garden.resolveModule("module-simple")
     expect(configInclude.include).to.eql(["manifest.yaml"])
@@ -185,9 +194,20 @@ describe("configureKubernetesType", () => {
     garden = await makeTestGarden(projectRoot)
   })
 
-  it("should resolve fine with null values for manifests in spec.files", async () => {
+  it("should resolve fine with null values for manifests in spec.manifestTemplates", async () => {
     const graph = await garden.getConfigGraph({ log: garden.log, emit: false })
     const action = graph.getDeploy("config-map-list")
-    expect(action["_config"].spec.files).to.eql([null])
+    const config = serialiseUnresolvedTemplates(action["_config"]) as ActionConfig
+
+    // spec won't be resolved until resolveAction
+    expect(config.spec.manifestTemplates).to.eql(["${var.foo ? 'manifests.yaml' : null}"])
+
+    // include will be fully resolved in preprocessActionConfig, and null values will be filtered by sparseArray
+    expect(config.include).to.eql([])
+
+    // validation will remove null values from sparse arrays
+    const resolved = await garden.resolveAction({ action, graph, log: garden.log })
+    expect(resolved.getConfig().spec.manifestTemplates).to.eql([])
+    expect(resolved.getConfig().include).to.eql([])
   })
 })

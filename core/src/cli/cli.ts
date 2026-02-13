@@ -10,8 +10,7 @@ import { intersection, mapValues, sortBy } from "lodash-es"
 import { resolve, join } from "path"
 import fsExtra from "fs-extra"
 import { getBuiltinCommands } from "../commands/commands.js"
-import { getCloudDistributionName } from "../util/cloud.js"
-import { shutdown, getPackageVersion } from "../util/util.js"
+import { getPackageVersion } from "../util/util.js"
 import type { Command, CommandResult, BuiltinArgs } from "../commands/base.js"
 import { CommandGroup } from "../commands/base.js"
 import type { GardenError } from "../exceptions.js"
@@ -34,32 +33,24 @@ import {
   checkRequirements,
   renderCommandErrors,
   cliStyles,
-  emitLoginWarning,
 } from "./helpers.js"
+import { enforceLogin } from "../cloud/auth.js"
 import type { ParameterObject, GlobalOptions, ParameterValues } from "./params.js"
 import { globalOptions, OUTPUT_RENDERERS } from "./params.js"
 import type { ProjectConfig } from "../config/project.js"
-import {
-  ERROR_LOG_FILENAME,
-  DEFAULT_GARDEN_DIR_NAME,
-  LOGS_DIR_NAME,
-  DEFAULT_GARDEN_CLOUD_DOMAIN,
-} from "../constants.js"
+import { ERROR_LOG_FILENAME, DEFAULT_GARDEN_DIR_NAME, LOGS_DIR_NAME, gardenEnv } from "../constants.js"
 import { generateBasicDebugInfoReport } from "../commands/get/get-debug-info.js"
 import type { AnalyticsHandler } from "../analytics/analytics.js"
 import type { GardenPluginReference } from "../plugin/plugin.js"
-import type { CloudApiFactory } from "../cloud/api.js"
-import { CloudApi, CloudApiTokenRefreshError, getGardenCloudDomain } from "../cloud/api.js"
 import { findProjectConfig } from "../config/base.js"
 import { pMemoizeDecorator } from "../lib/p-memoize.js"
 import { getCustomCommands } from "../commands/custom.js"
 import { Profile } from "../util/profiling.js"
 import { prepareDebugLogfiles } from "./debug-logs.js"
 import type { Log } from "../logger/log-entry.js"
-import { dedent } from "../util/string.js"
 import type { GardenProcess } from "../config-store/global.js"
 import { GlobalConfigStore } from "../config-store/global.js"
-import { registerProcess, waitForOutputFlush } from "../process.js"
+import { registerProcess } from "../process.js"
 import { uuidv4 } from "../util/random.js"
 import { withSessionContext } from "../util/open-telemetry/context.js"
 import { wrapActiveSpan } from "../util/open-telemetry/spans.js"
@@ -79,9 +70,8 @@ export interface RunOutput {
 }
 
 export interface GardenCliParams {
+  initLogger: boolean
   plugins?: GardenPluginReference[]
-  initLogger?: boolean
-  cloudApiFactory?: CloudApiFactory
 }
 
 function hasHelpFlag(argv: minimist.ParsedArgs) {
@@ -91,17 +81,16 @@ function hasHelpFlag(argv: minimist.ParsedArgs) {
 // TODO: this is used in more contexts now, should rename to GardenCommandRunner or something like that
 @Profile()
 export class GardenCli {
-  private commands: { [key: string]: Command } = {}
+  private readonly commands: { [key: string]: Command } = {}
+  private readonly initLogger: boolean
   private fileWritersInitialized = false
-  public plugins: GardenPluginReference[]
-  private initLogger: boolean
-  public processRecord?: GardenProcess
-  protected cloudApiFactory: CloudApiFactory
 
-  constructor({ plugins, initLogger = false, cloudApiFactory = CloudApi.factory }: GardenCliParams = {}) {
+  public readonly plugins: GardenPluginReference[]
+  public processRecord?: GardenProcess
+
+  constructor({ plugins, initLogger }: GardenCliParams) {
     this.plugins = plugins || []
     this.initLogger = initLogger
-    this.cloudApiFactory = cloudApiFactory
 
     const commands = sortBy(getBuiltinCommands(), (c) => c.name)
     commands.forEach((command) => this.addCommand(command))
@@ -250,35 +239,6 @@ ${renderCommands(commands)}
           : null
       gardenInitLog?.info("Initializing...")
 
-      // Init Cloud API (if applicable)
-      let cloudApi: CloudApi | undefined
-      if (!command.noProject) {
-        const config = await this.getProjectConfig(log, workingDir)
-        const cloudDomain = getGardenCloudDomain(config?.domain)
-        const distroName = getCloudDistributionName(cloudDomain)
-
-        try {
-          cloudApi = await this.cloudApiFactory({ log, cloudDomain, globalConfigStore })
-        } catch (err) {
-          if (err instanceof CloudApiTokenRefreshError) {
-            log.warn(dedent`
-              Unable to authenticate against ${distroName} with the current session token.
-              Command results for this command run will not be available in ${distroName}. If this not a
-              ${distroName} project you can ignore this warning. Otherwise, please try logging out with
-              \`garden logout\` and back in again with \`garden login\`.
-            `)
-
-            // Project is configured for cloud usage => fail early to force re-auth
-            if (config && config.id) {
-              throw err
-            }
-          } else {
-            // unhandled error when creating the cloud api
-            throw err
-          }
-        }
-      }
-
       const commandInfo = {
         name: command.getFullName(),
         args: parsedArgs,
@@ -288,16 +248,17 @@ ${renderCommands(commands)}
       const contextOpts: GardenOpts = {
         commandInfo,
         environmentString: environmentName,
+        globalConfigStore,
         log,
         gardenInitLog: gardenInitLog || undefined,
         forceRefresh,
         variableOverrides: parsedCliVars,
         plugins: this.plugins,
-        cloudApi,
+        skipCloudConnect: command.noProject,
       }
 
       let garden: Garden
-      let result: CommandResult<any> = {}
+      let result: CommandResult = {}
       let analytics: AnalyticsHandler | undefined = undefined
 
       const prepareParams = {
@@ -321,14 +282,15 @@ ${renderCommands(commands)}
         } else {
           garden = await wrapActiveSpan("initializeGarden", () => this.getGarden(workingDir, contextOpts))
 
-          await emitLoginWarning({
+          enforceLogin({
             garden,
             log,
-            isLoggedIn: !!cloudApi,
-            isCommunityEdition: garden.cloudDomain === DEFAULT_GARDEN_CLOUD_DOMAIN,
+            isOfflineModeEnabled: parsedOpts.offline || gardenEnv.GARDEN_OFFLINE,
           })
 
-          gardenLog.info(`Running in environment ${styles.highlight(`${garden.environmentName}.${garden.namespace}`)}`)
+          gardenLog.info(
+            `Running in environment ${styles.highlight(`${garden.environmentName}.${garden.namespace}`)} in project ${styles.highlight(garden.projectName)}`
+          )
 
           if (processRecord) {
             // Update the db record for the process
@@ -400,21 +362,18 @@ ${renderCommands(commands)}
         throw err
       } finally {
         await server?.close()
-        cloudApi?.close()
       }
 
-      return { result, analytics, cloudApi }
+      return { result, analytics }
     })
   }
 
   async run({
     args,
-    exitOnError,
     processRecord,
     cwd,
   }: {
     args: string[]
-    exitOnError: boolean
     processRecord?: GardenProcess
     cwd?: string
   }): Promise<RunOutput> {
@@ -423,14 +382,8 @@ ${renderCommands(commands)}
     const errors: (GardenError | Error)[] = []
 
     async function done(abortCode: number, consoleOutput: string, result: any = {}) {
-      if (exitOnError) {
-        // eslint-disable-next-line no-console
-        console.log(consoleOutput)
-        await waitForOutputFlush()
-        await shutdown(abortCode)
-      } else {
-        await waitForOutputFlush()
-      }
+      // eslint-disable-next-line no-console
+      console.log(consoleOutput)
 
       return { argv, code: abortCode, errors, result, consoleOutput }
     }
@@ -466,6 +419,7 @@ ${renderCommands(commands)}
         level: parseLogLevel(logLevelStr),
         storeEntries: false,
         displayWriterType: getTerminalWriterType({ silent, output, loggerType }),
+        outputRenderer: output,
         useEmoji: emoji,
         showTimestamps,
         force: this.initLogger,
@@ -484,9 +438,9 @@ ${renderCommands(commands)}
 
         if (projectConfig) {
           const customCommands = await this.getCustomCommands(log, workingDir)
-          const picked = pickCommand(customCommands, argv._)
-          command = picked.command
-          matchedPath = picked.matchedPath
+          const pickedCommand = pickCommand(customCommands, argv._)
+          command = pickedCommand.command
+          matchedPath = pickedCommand.matchedPath
         }
       } catch (error) {
         return done(1, toGardenError(error).explain("Failed to get custom commands"))
@@ -635,7 +589,6 @@ ${renderCommands(commands)}
     let code = 0
     if (gardenErrors.length > 0) {
       renderCommandErrors(logger, gardenErrors)
-      await waitForOutputFlush()
       code = commandResult.exitCode || 1
     }
 

@@ -23,7 +23,7 @@ import AsyncLock from "async-lock"
 import { isSha1 } from "../util/hashing.js"
 import { hashingStream } from "hasha"
 
-const { createReadStream, ensureDir, pathExists, readlink, stat } = fsExtra
+const { createReadStream, ensureDir, pathExists, readlink, lstat } = fsExtra
 
 export function getCommitIdFromRefList(refList: string[]): string {
   try {
@@ -59,7 +59,7 @@ function gitCliExecutor({ log, cwd, failOnPrompt = false }: GitCliParams): GitCl
    * @throws ChildProcessError
    */
   return async (...args: string[]) => {
-    log.silly(`Calling git with args '${args.join(" ")}' in ${cwd}`)
+    log.silly(() => `Calling git with args '${args.join(" ")}' in ${cwd}`)
     const { stdout } = await exec("git", args, {
       cwd,
       maxBuffer: 100 * 1024 * 1024,
@@ -71,9 +71,11 @@ function gitCliExecutor({ log, cwd, failOnPrompt = false }: GitCliParams): GitCl
 
 export class GitCli {
   private readonly git: GitCliExecutor
+  private readonly log: Log
 
   constructor(params: GitCliParams) {
     this.git = gitCliExecutor(params)
+    this.log = params.log
   }
 
   public async exec(...args: string[]) {
@@ -112,6 +114,32 @@ export class GitCli {
     const result = await this.git("config", "--get", "remote.origin.url")
     return result[0]
   }
+
+  public async getPathInfo() {
+    const output: VcsInfo = {
+      branch: "",
+      commitHash: "",
+      originUrl: "",
+    }
+
+    try {
+      output.branch = await this.getBranchName()
+      output.commitHash = await this.getLastCommitHash()
+    } catch (err) {
+      if (err instanceof ChildProcessError && err.details.code !== 128) {
+        throw err
+      }
+    }
+
+    try {
+      output.originUrl = await this.getOriginUrl()
+    } catch (err) {
+      // Just ignore if not available
+      this.log.silly(() => `Tried to retrieve git remote.origin.url but encountered an error: ${err}`)
+    }
+
+    return output
+  }
 }
 
 @Profile()
@@ -128,6 +156,7 @@ export abstract class AbstractGitHandler extends VcsHandler {
   async getRepoRoot(log: Log, path: string, failOnPrompt = false): Promise<string> {
     let cachedRepoRoot = this.repoRoots.get(path)
     if (!!cachedRepoRoot) {
+      this.profiler.inc("GitHandler.RepoRoots.hits")
       return cachedRepoRoot
     }
 
@@ -135,6 +164,7 @@ export abstract class AbstractGitHandler extends VcsHandler {
     return this.lock.acquire(`repo-root:${path}`, async () => {
       cachedRepoRoot = this.repoRoots.get(path)
       if (!!cachedRepoRoot) {
+        this.profiler.inc("GitHandler.RepoRoots.hits")
         return cachedRepoRoot
       }
 
@@ -142,6 +172,7 @@ export abstract class AbstractGitHandler extends VcsHandler {
         const git = new GitCli({ log, cwd: path, failOnPrompt })
         const repoRoot = await git.getRepositoryRoot()
         this.repoRoots.set(path, repoRoot)
+        this.profiler.inc("GitHandler.RepoRoots.misses")
         return repoRoot
       } catch (err) {
         if (!(err instanceof ChildProcessError)) {
@@ -273,76 +304,52 @@ export abstract class AbstractGitHandler extends VcsHandler {
     return this.lock.acquire(`remote-source-${sourceType}-${name}`, func)
   }
 
-  /**
-   * Replicates the `git hash-object` behavior. See https://stackoverflow.com/a/5290484/3290965
-   * We deviate from git's behavior when dealing with symlinks, by hashing the target of the symlink and not the
-   * symlink itself. If the symlink cannot be read, we hash the link contents like git normally does.
-   */
-  async hashObject(stats: fsExtra.Stats, path: string): Promise<string> {
-    const hash = hashingStream({ algorithm: "sha1" })
-
-    if (stats.isSymbolicLink()) {
-      // For symlinks, we follow git's behavior, which is to hash the link itself (i.e. the path it contains) as
-      // opposed to the file/directory that it points to.
-      try {
-        const linkPath = await readlink(path)
-        hash.update(`blob ${stats.size}\0${linkPath}`)
-        hash.end()
-        const output = hash.read()
-        return output
-      } catch (err) {
-        // Ignore errors here, just output empty hash
-        return ""
-      }
-    } else {
-      const stream = new PassThrough()
-      stream.push(`blob ${stats.size}\0`)
-
-      const result = defer<string>()
-      stream
-        .on("error", () => {
-          // Ignore file read error
-          result.resolve("")
-        })
-        .pipe(hash)
-        .on("error", (err) => result.reject(err))
-        .on("finish", () => {
-          const output = hash.read()
-          result.resolve(output)
-        })
-
-      createReadStream(path).pipe(stream)
-
-      return result.promise
-    }
-  }
-
   async getPathInfo(log: Log, path: string, failOnPrompt = false): Promise<VcsInfo> {
-    const git = new GitCli({ log, cwd: path, failOnPrompt })
+    return await getPathInfo(log, path, failOnPrompt)
+  }
+}
 
-    const output: VcsInfo = {
-      branch: "",
-      commitHash: "",
-      originUrl: "",
-    }
+/**
+ * Replicates the `git hash-object` behavior. See https://stackoverflow.com/a/5290484/3290965
+ * We deviate from git's behavior when dealing with symlinks, by hashing the target of the symlink and not the
+ * symlink itself. If the symlink cannot be read, we hash the link contents like git normally does.
+ */
+export async function hashObject(stats: fsExtra.Stats, path: string): Promise<string> {
+  const hash = hashingStream({ algorithm: "sha1" })
 
+  if (stats.isSymbolicLink()) {
+    // For symlinks, we follow git's behavior, which is to hash the link itself (i.e. the path it contains) as
+    // opposed to the file/directory that it points to.
     try {
-      output.branch = await git.getBranchName()
-      output.commitHash = await git.getLastCommitHash()
+      const linkPath = await readlink(path)
+      hash.update(`blob ${stats.size}\0${linkPath}`)
+      hash.end()
+      const output = hash.read()
+      return output
     } catch (err) {
-      if (err instanceof ChildProcessError && err.details.code !== 128) {
-        throw err
-      }
+      // Ignore errors here, just output empty hash
+      return ""
     }
+  } else {
+    const stream = new PassThrough()
+    stream.push(`blob ${stats.size}\0`)
 
-    try {
-      output.originUrl = await git.getOriginUrl()
-    } catch (err) {
-      // Just ignore if not available
-      log.silly(`Tried to retrieve git remote.origin.url but encountered an error: ${err}`)
-    }
+    const result = defer<string>()
+    stream
+      .on("error", () => {
+        // Ignore file read error
+        result.resolve("")
+      })
+      .pipe(hash)
+      .on("error", (err) => result.reject(err))
+      .on("finish", () => {
+        const output = hash.read()
+        result.resolve(output)
+      })
 
-    return output
+    createReadStream(path).pipe(stream)
+
+    return result.promise
   }
 }
 
@@ -389,11 +396,16 @@ export async function augmentGlobs(basePath: string, globs?: string[]): Promise<
 
       try {
         const path = joinWithPosix(basePath, pattern)
-        const stats = await stat(path)
+        const stats = await lstat(path)
         return stats.isDirectory() ? posix.join(pattern, "**", "*") : pattern
       } catch {
         return pattern
       }
     })
   )
+}
+
+export async function getPathInfo(log: Log, path: string, failOnPrompt = false): Promise<VcsInfo> {
+  const git = new GitCli({ log, cwd: path, failOnPrompt })
+  return await git.getPathInfo()
 }

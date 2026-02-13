@@ -15,16 +15,21 @@ import { makeTempDir } from "../../../../helpers.js"
 import { providerFromConfig } from "../../../../../src/config/provider.js"
 import type { Garden } from "../../../../../src/garden.js"
 import { makeDummyGarden } from "../../../../../src/garden.js"
-import { defaultSystemNamespace } from "../../../../../src/plugins/kubernetes/constants.js"
+import {
+  defaultSystemNamespace,
+  defaultUtilImageRegistryDomain,
+} from "../../../../../src/plugins/kubernetes/constants.js"
+import { UnresolvedProviderConfig } from "../../../../../src/config/project.js"
 
 describe("kubernetes configureProvider", () => {
   const basicConfig: KubernetesConfig = {
     name: "kubernetes",
+    utilImageRegistryDomain: defaultUtilImageRegistryDomain,
     buildMode: "local-docker",
     context: "my-cluster",
     defaultHostname: "hostname.invalid",
     deploymentRegistry: {
-      hostname: "eu.gcr.io",
+      hostname: "index.docker.io",
       namespace: "garden-ci",
       insecure: false,
     },
@@ -58,7 +63,12 @@ describe("kubernetes configureProvider", () => {
       ctx: await garden.getPluginContext({
         provider: providerFromConfig({
           plugin: gardenPlugin(),
-          config,
+          config: new UnresolvedProviderConfig(
+            config.name,
+            config.dependencies || [],
+            // @ts-expect-error todo: correct types for unresolved configs
+            config
+          ),
           dependencies: {},
           moduleConfigs: [],
           status: { ready: false, outputs: {} },
@@ -93,7 +103,8 @@ describe("kubernetes configureProvider", () => {
     const result = await configure({
       ...basicConfig,
       buildMode: "kaniko",
-      namespace: <any>(<unknown>"foo"),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      namespace: <any>"foo",
     })
 
     expect(result.config.namespace).to.eql({

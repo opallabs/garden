@@ -1,3 +1,410 @@
+
+<a name="0.13.63"></a>
+## [0.13.63](https://github.com/garden-io/garden/compare/0.14.17...0.13.63) (2026-02-11)
+
+### Bug Fixes
+
+* deal with Bitnami's infuriating rug-pull (0.13 edition) ([#7755](https://github.com/garden-io/garden/issues/7755)) ([abca1fc62](https://github.com/garden-io/garden/commit/abca1fc62))
+* do not throw on unknown action types for disabled actions ([#7177](https://github.com/garden-io/garden/issues/7177)) ([5bad9b748](https://github.com/garden-io/garden/commit/5bad9b748))
+* prevent unnecessary execution of builds referenced in runtime actions ([#7176](https://github.com/garden-io/garden/issues/7176)) ([fffcdb245](https://github.com/garden-io/garden/commit/fffcdb245))
+* **container:** always respect env vars to control remote builder ([#7168](https://github.com/garden-io/garden/issues/7168)) ([96241e5d9](https://github.com/garden-io/garden/commit/96241e5d9))
+* **docs:** correct config formatting in terraform examples ([#7232](https://github.com/garden-io/garden/issues/7232)) ([37b464611](https://github.com/garden-io/garden/commit/37b464611))
+* **git:** replace vulnerable parse-git-config with ini file parser ([#7094](https://github.com/garden-io/garden/issues/7094)) ([16c66f3c1](https://github.com/garden-io/garden/commit/16c66f3c1))
+* **k8s:** update to nginx ingress controller 1.12.1 that is not affected by RCE vulnerability ([#7031](https://github.com/garden-io/garden/issues/7031)) ([5843370e1](https://github.com/garden-io/garden/commit/5843370e1))
+* **module-k8s:** fix `deploymentImageId` in module conversion ([#7029](https://github.com/garden-io/garden/issues/7029)) ([00d156de8](https://github.com/garden-io/garden/commit/00d156de8))
+* **plugins:** add retry to tool fetching ([db2aba80e](https://github.com/garden-io/garden/commit/db2aba80e))
+* **solver:** throw if a dependency failed and `throwOnError` is true ([#7175](https://github.com/garden-io/garden/issues/7175)) ([7780b56ea](https://github.com/garden-io/garden/commit/7780b56ea))
+* **sync:** await monitors stop on `sync stop` completion ([#7061](https://github.com/garden-io/garden/issues/7061)) ([ad92dbe4f](https://github.com/garden-io/garden/commit/ad92dbe4f))
+* **template:** do not throw circular reference error when resolving cross-references in the same scope ([#7595](https://github.com/garden-io/garden/issues/7595)) ([c295f7c7c](https://github.com/garden-io/garden/commit/c295f7c7c))
+* **terraform:** use backendConfig with plugin commands ([#7249](https://github.com/garden-io/garden/issues/7249)) ([#7252](https://github.com/garden-io/garden/issues/7252)) ([c7504014a](https://github.com/garden-io/garden/commit/c7504014a))
+
+### Bundled Tool Version Updates
+
+* **helm:** update version to 3.17.2 ([#7119](https://github.com/garden-io/garden/issues/7119)) ([927116a65](https://github.com/garden-io/garden/commit/927116a65))
+* **kubectl:** update version to 1.32.3 ([#7120](https://github.com/garden-io/garden/issues/7120)) ([f9d7adba9](https://github.com/garden-io/garden/commit/f9d7adba9))
+* **mutagen:** update mutagen to 0.18.1 and base alpine image to 3.21.3 ([#7161](https://github.com/garden-io/garden/issues/7161)) ([78fc32e13](https://github.com/garden-io/garden/commit/78fc32e13))
+
+<a name="0.13.62"></a>
+## [0.13.62](https://github.com/garden-io/garden/compare/0.14.7...0.13.62) (2025-08-13)
+
+### Bug Fixes
+
+* do not throw on unknown action types for disabled actions ([#7177](https://github.com/garden-io/garden/issues/7177)) ([5bad9b748](https://github.com/garden-io/garden/commit/5bad9b748))
+* prevent unnecessary execution of builds referenced in runtime actions ([#7176](https://github.com/garden-io/garden/issues/7176)) ([fffcdb245](https://github.com/garden-io/garden/commit/fffcdb245))
+* **container:** always respect env vars to control remote builder ([#7168](https://github.com/garden-io/garden/issues/7168)) ([96241e5d9](https://github.com/garden-io/garden/commit/96241e5d9))
+* **docs:** correct config formatting in terraform examples ([#7232](https://github.com/garden-io/garden/issues/7232)) ([37b464611](https://github.com/garden-io/garden/commit/37b464611))
+* **git:** replace vulnerable parse-git-config with ini file parser ([#7094](https://github.com/garden-io/garden/issues/7094)) ([16c66f3c1](https://github.com/garden-io/garden/commit/16c66f3c1))
+* **k8s:** update to nginx ingress controller 1.12.1 that is not affected by RCE vulnerability ([#7031](https://github.com/garden-io/garden/issues/7031)) ([5843370e1](https://github.com/garden-io/garden/commit/5843370e1))
+* **module-k8s:** fix `deploymentImageId` in module conversion ([#7029](https://github.com/garden-io/garden/issues/7029)) ([00d156de8](https://github.com/garden-io/garden/commit/00d156de8))
+* **solver:** throw if a dependency failed and `throwOnError` is true ([#7175](https://github.com/garden-io/garden/issues/7175)) ([7780b56ea](https://github.com/garden-io/garden/commit/7780b56ea))
+* **sync:** await monitors stop on `sync stop` completion ([#7061](https://github.com/garden-io/garden/issues/7061)) ([ad92dbe4f](https://github.com/garden-io/garden/commit/ad92dbe4f))
+* **template:** do not throw circular reference error when resolving cross-references in the same scope ([#7595](https://github.com/garden-io/garden/issues/7595)) ([c295f7c7c](https://github.com/garden-io/garden/commit/c295f7c7c))
+* **terraform:** use backendConfig with plugin commands ([#7249](https://github.com/garden-io/garden/issues/7249)) ([#7252](https://github.com/garden-io/garden/issues/7252)) ([c7504014a](https://github.com/garden-io/garden/commit/c7504014a))
+
+### Bundled Tool Version Updates
+
+* **helm:** update version to 3.17.2 ([#7119](https://github.com/garden-io/garden/issues/7119)) ([927116a65](https://github.com/garden-io/garden/commit/927116a65))
+* **kubectl:** update version to 1.32.3 ([#7120](https://github.com/garden-io/garden/issues/7120)) ([f9d7adba9](https://github.com/garden-io/garden/commit/f9d7adba9))
+* **mutagen:** update mutagen to 0.18.1 and base alpine image to 3.21.3 ([#7161](https://github.com/garden-io/garden/issues/7161)) ([78fc32e13](https://github.com/garden-io/garden/commit/78fc32e13))
+
+<a name="0.13.61"></a>
+## [0.13.61](https://github.com/garden-io/garden/compare/0.14.6...0.13.61) (2025-07-29)
+
+### Bug Fixes
+
+* do not throw on unknown action types for disabled actions ([#7177](https://github.com/garden-io/garden/issues/7177)) ([5bad9b748](https://github.com/garden-io/garden/commit/5bad9b748))
+* prevent unnecessary execution of builds referenced in runtime actions ([#7176](https://github.com/garden-io/garden/issues/7176)) ([fffcdb245](https://github.com/garden-io/garden/commit/fffcdb245))
+* **container:** always respect env vars to control remote builder ([#7168](https://github.com/garden-io/garden/issues/7168)) ([96241e5d9](https://github.com/garden-io/garden/commit/96241e5d9))
+* **docs:** correct config formatting in terraform examples ([#7232](https://github.com/garden-io/garden/issues/7232)) ([37b464611](https://github.com/garden-io/garden/commit/37b464611))
+* **git:** replace vulnerable parse-git-config with ini file parser ([#7094](https://github.com/garden-io/garden/issues/7094)) ([16c66f3c1](https://github.com/garden-io/garden/commit/16c66f3c1))
+* **k8s:** update to nginx ingress controller 1.12.1 that is not affected by RCE vulnerability ([#7031](https://github.com/garden-io/garden/issues/7031)) ([5843370e1](https://github.com/garden-io/garden/commit/5843370e1))
+* **module-k8s:** fix `deploymentImageId` in module conversion ([#7029](https://github.com/garden-io/garden/issues/7029)) ([00d156de8](https://github.com/garden-io/garden/commit/00d156de8))
+* **solver:** throw if a dependency failed and `throwOnError` is true ([#7175](https://github.com/garden-io/garden/issues/7175)) ([7780b56ea](https://github.com/garden-io/garden/commit/7780b56ea))
+* **sync:** await monitors stop on `sync stop` completion ([#7061](https://github.com/garden-io/garden/issues/7061)) ([ad92dbe4f](https://github.com/garden-io/garden/commit/ad92dbe4f))
+* **terraform:** use backendConfig with plugin commands ([#7249](https://github.com/garden-io/garden/issues/7249)) ([#7252](https://github.com/garden-io/garden/issues/7252)) ([c7504014a](https://github.com/garden-io/garden/commit/c7504014a))
+
+### Bundled Tool Version Updates
+
+* **helm:** update version to 3.17.2 ([#7119](https://github.com/garden-io/garden/issues/7119)) ([927116a65](https://github.com/garden-io/garden/commit/927116a65))
+* **kubectl:** update version to 1.32.3 ([#7120](https://github.com/garden-io/garden/issues/7120)) ([f9d7adba9](https://github.com/garden-io/garden/commit/f9d7adba9))
+* **mutagen:** update mutagen to 0.18.1 and base alpine image to 3.21.3 ([#7161](https://github.com/garden-io/garden/issues/7161)) ([78fc32e13](https://github.com/garden-io/garden/commit/78fc32e13))
+
+<a name="0.13.60"></a>
+## [0.13.60](https://github.com/garden-io/garden/compare/0.13.59...0.13.60) (2025-06-10)
+
+### Bug Fixes
+
+* **docs:** correct config formatting in terraform examples ([#7232](https://github.com/garden-io/garden/issues/7232)) ([37b464611](https://github.com/garden-io/garden/commit/37b464611))
+* **terraform:** use backendConfig with plugin commands ([#7249](https://github.com/garden-io/garden/issues/7249)) ([#7252](https://github.com/garden-io/garden/issues/7252)) ([c7504014a](https://github.com/garden-io/garden/commit/c7504014a))
+
+<a name="0.13.59"></a>
+## [0.13.59](https://github.com/garden-io/garden/compare/0.13.58...0.13.59) (2025-04-25)
+
+### Bug Fixes
+
+* do not throw on unknown action types for disabled actions ([#7177](https://github.com/garden-io/garden/issues/7177)) ([5bad9b748](https://github.com/garden-io/garden/commit/5bad9b748))
+* prevent unnecessary execution of builds referenced in runtime actions ([#7176](https://github.com/garden-io/garden/issues/7176)) ([fffcdb245](https://github.com/garden-io/garden/commit/fffcdb245))
+* **container:** always respect env vars to control remote builder ([#7168](https://github.com/garden-io/garden/issues/7168)) ([96241e5d9](https://github.com/garden-io/garden/commit/96241e5d9))
+* **module-k8s:** fix `deploymentImageId` in module conversion ([#7029](https://github.com/garden-io/garden/issues/7029)) ([00d156de8](https://github.com/garden-io/garden/commit/00d156de8))
+* **solver:** throw if a dependency failed and `throwOnError` is true ([#7175](https://github.com/garden-io/garden/issues/7175)) ([7780b56ea](https://github.com/garden-io/garden/commit/7780b56ea))
+
+### Bundled Tool Version Updates
+
+* **helm:** update version to 3.17.2 ([#7119](https://github.com/garden-io/garden/issues/7119)) ([927116a65](https://github.com/garden-io/garden/commit/927116a65))
+* **kubectl:** update version to 1.32.3 ([#7120](https://github.com/garden-io/garden/issues/7120)) ([f9d7adba9](https://github.com/garden-io/garden/commit/f9d7adba9))
+* **mutagen:** update mutagen to 0.18.1 and base alpine image to 3.21.3 ([#7161](https://github.com/garden-io/garden/issues/7161)) ([78fc32e13](https://github.com/garden-io/garden/commit/78fc32e13))
+
+<a name="0.13.58"></a>
+## [0.13.58](https://github.com/garden-io/garden/compare/0.13.57...0.13.58) (2025-04-09)
+
+### Bug Fixes
+
+* **git:** replace vulnerable parse-git-config with ini file parser ([#7094](https://github.com/garden-io/garden/issues/7094)) ([16c66f3c1](https://github.com/garden-io/garden/commit/16c66f3c1))
+* **sync:** await monitors stop on `sync stop` completion ([#7061](https://github.com/garden-io/garden/issues/7061)) ([ad92dbe4f](https://github.com/garden-io/garden/commit/ad92dbe4f))
+
+<a name="0.13.57"></a>
+## [0.13.57](https://github.com/garden-io/garden/compare/0.14.0...0.13.57) (2025-03-26)
+
+### Bug Fixes
+
+* **k8s:** update to nginx ingress controller 1.12.1 that is not affected by RCE vulnerability ([#7031](https://github.com/garden-io/garden/issues/7031)) ([5843370e1](https://github.com/garden-io/garden/commit/5843370e1))
+
+<a name="0.13.56"></a>
+## [0.13.56](https://github.com/garden-io/garden/compare/0.13.55...0.13.56) (2025-03-23)
+
+### Bug Fixes
+
+* add deprecation for action volume references, as that's implied when deprecating `persistentvolumeclaim` and `configmap` action types ([#6976](https://github.com/garden-io/garden/issues/6976))
+* reduce scope of the `build` deprecation to the `container` type ([#6972](https://github.com/garden-io/garden/issues/6972))
+
+### Improvements
+
+* **core**: fixes to output reference logic ([#6983](https://github.com/garden-io/garden/issues/6983))
+
+<a name="0.13.55"></a>
+## [0.13.55](https://github.com/garden-io/garden/compare/0.13.54...0.13.55) (2025-03-11)
+
+### Bug Fixes
+
+* improve error message when servicePort does not reference a port by name ([#6894](https://github.com/garden-io/garden/issues/6894)) ([6e0cf71c5](https://github.com/garden-io/garden/commit/6e0cf71c5))
+* **build-staging:** fix the detection of paths to be deleted ([#6904](https://github.com/garden-io/garden/issues/6904)) ([ee976ad2b](https://github.com/garden-io/garden/commit/ee976ad2b))
+* **config:** throw validation errors when encountering unknown keys in action configs ([#6875](https://github.com/garden-io/garden/issues/6875)) ([06448a086](https://github.com/garden-io/garden/commit/06448a086))
+* **core:** always suppress logs when `--output` is used ([#6909](https://github.com/garden-io/garden/issues/6909)) ([3434a55dd](https://github.com/garden-io/garden/commit/3434a55dd))
+* **docs:** propagate correct action kind to k8s Run/Test reference docs ([#6923](https://github.com/garden-io/garden/issues/6923)) ([08b0eeaa6](https://github.com/garden-io/garden/commit/08b0eeaa6))
+* **k8s:** improve error message when servicePort does not reference a port by name ([#6894](https://github.com/garden-io/garden/issues/6894)) ([6e0cf71c5](https://github.com/garden-io/garden/commit/6e0cf71c5))
+* **k8s:** respect `spec.cacheResult` flag in `kubernetes-pod` Test actions ([#6924](https://github.com/garden-io/garden/issues/6924))
+* **k8s:** do not cache duplicate logs in Run and Test results ([#6927](https://github.com/garden-io/garden/issues/6927))
+
+### Features
+
+* **cli:** add more fields to garden get actions detailed output ([#6903](https://github.com/garden-io/garden/issues/6903)) ([1f4de4e3b](https://github.com/garden-io/garden/commit/1f4de4e3b))
+* **container:** add `cacheResult` config option  for `container` Test actions ([#6925](https://github.com/garden-io/garden/issues/6925)) ([6c0f8f019](https://github.com/garden-io/garden/commit/6c0f8f019))
+
+### Improvements
+
+* **k8s:** improve logs when maximum retry attempts exceeded ([#6888](https://github.com/garden-io/garden/issues/6888)) ([305958e5a](https://github.com/garden-io/garden/commit/305958e5a))
+
+<a name="0.13.54"></a>
+## [0.13.54](https://github.com/garden-io/garden/compare/0.13.53...0.13.54) (2025-02-20)
+
+### Bug Fixes
+
+* correct source mapping in varfiles ([#6870](https://github.com/garden-io/garden/issues/6870)) ([994d78fb4](https://github.com/garden-io/garden/commit/994d78fb4))
+* fix regression in cmd result processing ([#6867](https://github.com/garden-io/garden/issues/6867)) ([f2f80ca64](https://github.com/garden-io/garden/commit/f2f80ca64))
+* do not consider implicit dependencies from action references in dead code branches ([#6862](https://github.com/garden-io/garden/issues/6862)) ([b4ee79178](https://github.com/garden-io/garden/commit/b4ee79178))
+* dependency error message rendering ([#6847](https://github.com/garden-io/garden/issues/6847)) ([c7da2f2ac](https://github.com/garden-io/garden/commit/c7da2f2ac))
+* mute false-positive deprecation warning for `deploymentStrategy` ([#6845](https://github.com/garden-io/garden/issues/6845)) ([583354785](https://github.com/garden-io/garden/commit/583354785))
+* **dev:** fix unresolved templates in cmd results ([#6850](https://github.com/garden-io/garden/issues/6850)) ([4a2cd9c25](https://github.com/garden-io/garden/commit/4a2cd9c25))
+* **k8s:** crash if `spec.files` in a `kubernetes` `Deploy` action is a template value ([#6868](https://github.com/garden-io/garden/issues/6868)) ([74f2efde6](https://github.com/garden-io/garden/commit/74f2efde6))
+* **template:** propagate condition recursively in `conditionallyDeepEvaluate` ([#6852](https://github.com/garden-io/garden/issues/6852)) ([9ad03742e](https://github.com/garden-io/garden/commit/9ad03742e))
+* **template:** parse template strings in varfiles ([#6844](https://github.com/garden-io/garden/issues/6844)) ([f855d91c1](https://github.com/garden-io/garden/commit/f855d91c1))
+
+### Improvements
+
+* **terraform:** support dynamic backends ([#6828](https://github.com/garden-io/garden/issues/6828)) ([9cb1c1ec3](https://github.com/garden-io/garden/commit/9cb1c1ec3))
+* **terraform:** enable streaming logs to cloud ([#6829](https://github.com/garden-io/garden/issues/6829)) ([0fac9d064](https://github.com/garden-io/garden/commit/0fac9d064))
+
+<a name="0.13.53"></a>
+## [0.13.53](https://github.com/garden-io/garden/compare/0.13.52...0.13.53) (2025-02-06)
+
+### Bug Fixes
+
+* validate secrets before action resolution ([#6822](https://github.com/garden-io/garden/issues/6822)) ([55e7308d2](https://github.com/garden-io/garden/commit/55e7308d2))
+* **cluster-buildkit:** assume image needs rebuild if skopeo command fails and print a warning ([#6810](https://github.com/garden-io/garden/issues/6810)) ([a8918e3c3](https://github.com/garden-io/garden/commit/a8918e3c3))
+
+### Features
+
+* allow cross-referencing variables in the same scope ([#6814](https://github.com/garden-io/garden/issues/6814)) ([463a758f2](https://github.com/garden-io/garden/commit/463a758f2))
+
+### Performance Improvements
+
+* improve preprocess action perf by only resolving template strings when absolutely needed ([#6745](https://github.com/garden-io/garden/issues/6745)) ([c968c6164](https://github.com/garden-io/garden/commit/c968c6164))
+
+<a name="0.13.52"></a>
+## [0.13.52](https://github.com/garden-io/garden/compare/0.13.51...0.13.52) (2025-01-30)
+
+### Bug Fixes
+
+* broken path inside window binary zipped file ([#6812](https://github.com/garden-io/garden/issues/6812)) ([fe2fbdaee](https://github.com/garden-io/garden/commit/fe2fbdaee))
+
+### Improvements
+
+* **k8s:** update ingress controller to 1.12.0 (Helm chart 4.12.0) ([#6789](https://github.com/garden-io/garden/issues/6789)) ([ca9deca68](https://github.com/garden-io/garden/commit/ca9deca68))
+
+<a name="0.13.51"></a>
+## [0.13.51](https://github.com/garden-io/garden/compare/0.13.50...0.13.51) (2025-01-28)
+
+### Improvements
+
+* add better error handling when failing to archive test artifacts ([#6802](https://github.com/garden-io/garden/issues/6802)) ([589cb3926](https://github.com/garden-io/garden/commit/589cb3926))
+
+<a name="0.13.50"></a>
+## [0.13.50](https://github.com/garden-io/garden/compare/0.13.49...0.13.50) (2025-01-24)
+
+### Bug Fixes
+
+* when using create project, the project name is undefined ([#6797](https://github.com/garden-io/garden/issues/6797)) ([39a6345f5](https://github.com/garden-io/garden/commit/39a6345f5))
+* do not crash on missing `deploymentRegistry` for in-cluster builds ([#6768](https://github.com/garden-io/garden/issues/6768)) ([c55486ddd](https://github.com/garden-io/garden/commit/c55486ddd))
+* **container:** respect deployment registry in publishId if not explicitly set ([#6690](https://github.com/garden-io/garden/issues/6690)) ([0c8ec05d4](https://github.com/garden-io/garden/commit/0c8ec05d4))
+* **k8s:** do not throw if paused resource is missing ([#6799](https://github.com/garden-io/garden/issues/6799)) ([62b77ed67](https://github.com/garden-io/garden/commit/62b77ed67))
+* **k8s:** ensure image pull secret is always created for K8s Deploy ([#6795](https://github.com/garden-io/garden/issues/6795)) ([6898536d8](https://github.com/garden-io/garden/commit/6898536d8))
+
+### Improvements
+
+* improvement(framework): always run prepareEnvironment handler [#6706](https://github.com/garden-io/garden/issues/6706) ([0c18a0e97](https://github.com/garden-io/garden/commit/0c18a0e97))
+
+<a name="0.13.49"></a>
+## [0.13.49](https://github.com/garden-io/garden/compare/0.13.48...0.13.49) (2025-01-14)
+
+### Bug Fixes
+
+* use non-legacy build staging file sync on Windows by default ([#6758](https://github.com/garden-io/garden/issues/6758)) ([4c83cd388](https://github.com/garden-io/garden/commit/4c83cd388))
+* **core:** emit namespaceStatus events during provider init ([#6759](https://github.com/garden-io/garden/issues/6759)) ([c704a356e](https://github.com/garden-io/garden/commit/c704a356e))
+
+### Improvements
+
+* **core:** print project name with init log ([#6756](https://github.com/garden-io/garden/issues/6756)) ([67123d158](https://github.com/garden-io/garden/commit/67123d158))
+
+<a name="0.13.48"></a>
+## [0.13.48](https://github.com/garden-io/garden/compare/0.13.47...0.13.48) (2025-01-09)
+
+### Bug Fixes
+
+* resolve parts of template strings, even if another part cannot be resolved yet. ([#6751](https://github.com/garden-io/garden/issues/6751)) ([aabebbd03](https://github.com/garden-io/garden/commit/aabebbd03))
+
+### Features
+
+* allow overriding `source.path` in remote actions (when using `source.repository`) ([#6750](https://github.com/garden-io/garden/issues/6750)) ([20a4ba3b8](https://github.com/garden-io/garden/commit/20a4ba3b8))
+* **pulumi:** enable new varfile schema for modules ([#6735](https://github.com/garden-io/garden/issues/6735)) ([bf74500a9](https://github.com/garden-io/garden/commit/bf74500a9))
+* **pulumi:** add new pulumi varfile schema that allows specifying other top-level keys ([#6729](https://github.com/garden-io/garden/issues/6729)) ([f014cb666](https://github.com/garden-io/garden/commit/f014cb666))
+
+### Performance Improvements
+
+* optimise solver graph evaluation loop ([#6728](https://github.com/garden-io/garden/issues/6728)) ([bd6c6ba0d](https://github.com/garden-io/garden/commit/bd6c6ba0d))
+
+<a name="0.13.47"></a>
+## [0.13.47](https://github.com/garden-io/garden/compare/0.13.46...0.13.47) (2024-12-12)
+
+### Bug Fixes
+
+* make sure to display the mutagen version update warning message ([#6715](https://github.com/garden-io/garden/issues/6715)) ([9d971d255](https://github.com/garden-io/garden/commit/9d971d255))
+* **template:** establish backwards bug-compatibility for kubernetes manifest files ([#6713](https://github.com/garden-io/garden/issues/6713)) ([424b39220](https://github.com/garden-io/garden/commit/424b39220))
+* **templates:** fix regression with multiple if statements introduced in 0.13.46 ([#6714](https://github.com/garden-io/garden/issues/6714)) ([7fbe71779](https://github.com/garden-io/garden/commit/7fbe71779))
+
+<a name="0.13.46"></a>
+## [0.13.46](https://github.com/garden-io/garden/compare/0.13.45...0.13.46) (2024-12-11)
+
+### Bug Fixes
+
+* retain bug-compatibility for referencing missing variables in unary operators (`!` and `typeof`). ([#6695](https://github.com/garden-io/garden/issues/6695)) ([063eb9276](https://github.com/garden-io/garden/commit/063eb9276))
+* improve error message if filter expression in foreach cannot be resolved ([#6694](https://github.com/garden-io/garden/issues/6694)) ([3ff5ee07a](https://github.com/garden-io/garden/commit/3ff5ee07a))
+* if block expression backwards compat ([#6693](https://github.com/garden-io/garden/issues/6693)) ([67b99ac64](https://github.com/garden-io/garden/commit/67b99ac64))
+* **k8s-exec:** use containerName if specified for kubernetes-exec actions ([#6682](https://github.com/garden-io/garden/issues/6682)) ([976ab7037](https://github.com/garden-io/garden/commit/976ab7037))
+* **local-k8s:** ensure correct nginx status when getting env status ([#6696](https://github.com/garden-io/garden/issues/6696)) ([3c65e4900](https://github.com/garden-io/garden/commit/3c65e4900))
+* **publish:** copy image from registry if it has been pushed directly after build ([#6681](https://github.com/garden-io/garden/issues/6681)) ([405940e9e](https://github.com/garden-io/garden/commit/405940e9e))
+* **template:** fix template string escaping ([#6705](https://github.com/garden-io/garden/issues/6705)) ([32f8ec66e](https://github.com/garden-io/garden/commit/32f8ec66e))
+
+### Bundled Tool Version Updates
+
+* **mutagen:** update version to 0.18.0 ([#6665](https://github.com/garden-io/garden/issues/6665)) ([2e2792574](https://github.com/garden-io/garden/commit/2e2792574))
+
+### Features
+
+* **cli:** allow generating flamegraphs for performance analysis ([#6684](https://github.com/garden-io/garden/issues/6684)) ([2fdad584a](https://github.com/garden-io/garden/commit/2fdad584a))
+
+### Improvements
+
+* Point to YAML file for template string error messages if possible ([#6692](https://github.com/garden-io/garden/issues/6692)) ([a9c205bd8](https://github.com/garden-io/garden/commit/a9c205bd8))
+
+### Performance Improvements
+
+* optimise template string resolving performance ([#6685](https://github.com/garden-io/garden/issues/6685)) ([a34856491](https://github.com/garden-io/garden/commit/a34856491))
+* improve graph resolve performance ([#6670](https://github.com/garden-io/garden/issues/6670)) ([4e4cd91e0](https://github.com/garden-io/garden/commit/4e4cd91e0))
+* **framework:** avoid unnecessary config graph cloning ([#6667](https://github.com/garden-io/garden/issues/6667)) ([f15dd911d](https://github.com/garden-io/garden/commit/f15dd911d))
+
+<a name="0.13.45"></a>
+## [0.13.45](https://github.com/garden-io/garden/compare/0.13.44...0.13.45) (2024-11-20)
+
+<a name="0.13.44"></a>
+## [0.13.44](https://github.com/garden-io/garden/compare/0.13.43...0.13.44) (2024-11-20)
+
+### Bug Fixes
+
+* fix user prompt function ([#6613](https://github.com/garden-io/garden/issues/6613)) ([16ca20442](https://github.com/garden-io/garden/commit/16ca20442))
+* **container:** container registry namespace is empty when not specified ([#6638](https://github.com/garden-io/garden/issues/6638)) ([439559853](https://github.com/garden-io/garden/commit/439559853))
+* **k8s:** respect pod selector in kubernetes-exec action type ([#6657](https://github.com/garden-io/garden/issues/6657)) ([3e680e036](https://github.com/garden-io/garden/commit/3e680e036))
+
+### Bundled Tool Version Updates
+
+* **helm:** update version to 3.16.2 ([#6624](https://github.com/garden-io/garden/issues/6624)) ([cfbef2fe3](https://github.com/garden-io/garden/commit/cfbef2fe3))
+* **kubectl:** update version to 1.31.2 ([#6623](https://github.com/garden-io/garden/issues/6623)) ([a44ea9929](https://github.com/garden-io/garden/commit/a44ea9929))
+* **mutagen:** update version to 0.18.0 ([#6655](https://github.com/garden-io/garden/issues/6655)) ([327f48485](https://github.com/garden-io/garden/commit/327f48485))
+
+### Features
+
+* **k8s:** show Helm events and logs ([#6626](https://github.com/garden-io/garden/issues/6626)) ([0f7bf25aa](https://github.com/garden-io/garden/commit/0f7bf25aa))
+
+<a name="0.13.43"></a>
+## [0.13.43](https://github.com/garden-io/garden/compare/0.13.42...0.13.43) (2024-10-30)
+
+### Bug Fixes
+
+* correct deploy action validation in container plugin extension ([#6606](https://github.com/garden-io/garden/issues/6606)) ([ba2a4954a](https://github.com/garden-io/garden/commit/ba2a4954a))
+* render action reference in error message ([#6605](https://github.com/garden-io/garden/issues/6605)) ([4ebe9975a](https://github.com/garden-io/garden/commit/4ebe9975a))
+* **k8s:** correctly set image pull secret on sync pod ([#6533](https://github.com/garden-io/garden/issues/6533)) ([a2826a947](https://github.com/garden-io/garden/commit/a2826a947))
+* **k8s:** add imagePullSecret from kubernetes provider to sync init container ([#6530](https://github.com/garden-io/garden/issues/6530)) ([07a577ef4](https://github.com/garden-io/garden/commit/07a577ef4))
+* **profiler:** fix sync profiler and collect more data ([#6586](https://github.com/garden-io/garden/issues/6586)) ([04dcc006c](https://github.com/garden-io/garden/commit/04dcc006c))
+* **pulumi:** stack not being selected before getting outputs when autoApply = false ([#6554](https://github.com/garden-io/garden/issues/6554)) ([8fd42f3b3](https://github.com/garden-io/garden/commit/8fd42f3b3))
+* **pulumi:** prevent existing pulumi configs from being overwritten ([#6526](https://github.com/garden-io/garden/issues/6526)) ([dcfef40c6](https://github.com/garden-io/garden/commit/dcfef40c6))
+
+### Features
+
+* **exec:** separate `stdout` and `stderr` in Run and Test `exec`-action outputs ([#6572](https://github.com/garden-io/garden/issues/6572)) ([5a04f60ac](https://github.com/garden-io/garden/commit/5a04f60ac))
+* **k8s:** allow using registry mirror for utility images ([#6552](https://github.com/garden-io/garden/issues/6552)) ([122371dd6](https://github.com/garden-io/garden/commit/122371dd6))
+* **pulumi:** add `spec.showSecretsInOutput` config to Pulumi deploy action ([#6555](https://github.com/garden-io/garden/issues/6555)) ([682e37896](https://github.com/garden-io/garden/commit/682e37896))
+
+### Improvements
+
+* make sure artifacts are always fetched ([#6532](https://github.com/garden-io/garden/issues/6532)) ([593c9cbdf](https://github.com/garden-io/garden/commit/593c9cbdf))
+* **api:** send action type to cloud ([#5447](https://github.com/garden-io/garden/issues/5447)) ([15fe97404](https://github.com/garden-io/garden/commit/15fe97404))
+
+### Performance Improvements
+
+* optimize action configs processing ([#6547](https://github.com/garden-io/garden/issues/6547)) ([af6df50a8](https://github.com/garden-io/garden/commit/af6df50a8))
+* **git:** use `sub-tree` scan mode for config files scan ([#6483](https://github.com/garden-io/garden/issues/6483)) ([131663140](https://github.com/garden-io/garden/commit/131663140))
+
+<a name="0.13.42"></a>
+## [0.13.42](https://github.com/garden-io/garden/compare/0.13.41...0.13.42) (2024-10-08)
+
+### Bug Fixes
+
+* misleading warning message when cloud session is expired ([#6503](https://github.com/garden-io/garden/issues/6503)) ([8359ae334](https://github.com/garden-io/garden/commit/8359ae334))
+* **otel:** ensure OTEL sends final span when -o opt is used ([#6505](https://github.com/garden-io/garden/issues/6505)) ([7b96bdb64](https://github.com/garden-io/garden/commit/7b96bdb64))
+
+### Bundled Tool Version Updates
+
+* **images:** update `buildkit` image to fix CVE-2023-44487 ([#6522](https://github.com/garden-io/garden/issues/6522)) ([b75370551](https://github.com/garden-io/garden/commit/b75370551))
+* **kubectl:** update version to 1.30.4 ([#6519](https://github.com/garden-io/garden/issues/6519)) ([86a644788](https://github.com/garden-io/garden/commit/86a644788))
+
+<a name="0.13.41"></a>
+## [0.13.41](https://github.com/garden-io/garden/compare/0.13.40...0.13.41) (2024-09-26)
+
+### Bug Fixes
+
+* **core:** avoid crash when using `copyFrom` together with symlinks ([#6485](https://github.com/garden-io/garden/issues/6485)) ([a7f0420ec](https://github.com/garden-io/garden/commit/a7f0420ec))
+* **sync:** use right arch of `mutagen-agent` binary in `k8s-sync` image ([#6465](https://github.com/garden-io/garden/issues/6465)) ([66e5a7530](https://github.com/garden-io/garden/commit/66e5a7530))
+
+### Performance Improvements
+
+* **git:** avoid unnecessary file hashing while config files detection ([#6461](https://github.com/garden-io/garden/issues/6461)) ([a786a5047](https://github.com/garden-io/garden/commit/a786a5047))
+
+<a name="0.13.40"></a>
+## [0.13.40](https://github.com/garden-io/garden/compare/0.13.39...0.13.40) (2024-09-18)
+
+### Bug Fixes
+
+* avoid throwing 401 when trying to login to cloud ([#6447](https://github.com/garden-io/garden/issues/6447)) ([728077060](https://github.com/garden-io/garden/commit/728077060))
+* reproduce symlinks in build staging correctly on windows ([#6433](https://github.com/garden-io/garden/issues/6433)) ([e4adc6b1c](https://github.com/garden-io/garden/commit/e4adc6b1c))
+* allow relative symlinks to directories when using build staging ([#6430](https://github.com/garden-io/garden/issues/6430)) ([26644fcf5](https://github.com/garden-io/garden/commit/26644fcf5))
+* add applyArgs to kubectl apply function ([#6385](https://github.com/garden-io/garden/issues/6385)) ([f140ab2d7](https://github.com/garden-io/garden/commit/f140ab2d7))
+* **sync:** correct search path for mutagen faux ssh ([#6421](https://github.com/garden-io/garden/issues/6421)) ([74f7ef211](https://github.com/garden-io/garden/commit/74f7ef211))
+* **template:** avoid premature `disabled` flag evaluation on actions ([#6448](https://github.com/garden-io/garden/issues/6448)) ([c0e9065ad](https://github.com/garden-io/garden/commit/c0e9065ad))
+
+<a name="0.13.39"></a>
+## [0.13.39](https://github.com/garden-io/garden/compare/0.13.38...0.13.39) (2024-08-29)
+
+### Bug Fixes
+
+* **examples:** remove invalid action dependency from pulumi example ([#6384](https://github.com/garden-io/garden/issues/6384)) ([445d7d377](https://github.com/garden-io/garden/commit/445d7d377))
+* **template:** keep action variables when resolving disabled flag ([#6406](https://github.com/garden-io/garden/issues/6406)) ([0b8b0497b](https://github.com/garden-io/garden/commit/0b8b0497b))
+* **template:** fix template string escaping and resolution in Module configs ([#6408](https://github.com/garden-io/garden/issues/6408)) ([8df80152a](https://github.com/garden-io/garden/commit/8df80152a))
+* **template:** unescape escape templates when not doing partial resolution ([#5680](https://github.com/garden-io/garden/issues/5680)) ([cc6e41c3a](https://github.com/garden-io/garden/commit/cc6e41c3a))
+
+<a name="0.13.38"></a>
+## [0.13.38](https://github.com/garden-io/garden/compare/0.13.37...0.13.38) (2024-08-15)
+
+### Bug Fixes
+
+* improve error message when k8s token expired ([#6382](https://github.com/garden-io/garden/issues/6382)) ([bd2b94382](https://github.com/garden-io/garden/commit/bd2b94382))
+* **pulumi:** fix process spawn machinery in Pulumi plugin ([#6377](https://github.com/garden-io/garden/issues/6377)) ([76bdbec72](https://github.com/garden-io/garden/commit/76bdbec72))
+* **testResult:** transform undefined to null when serializing test result ([#6380](https://github.com/garden-io/garden/issues/6380)) ([883df510e](https://github.com/garden-io/garden/commit/883df510e))
+
+### Bundled Tool Version Updates
+
+* **docker:** update bundled Docker CLI to 27.1.1 ([#6368](https://github.com/garden-io/garden/issues/6368)) ([2587afdb0](https://github.com/garden-io/garden/commit/2587afdb0))
+
+<a name="0.13.37"></a>
+## [0.13.37](https://github.com/garden-io/garden/compare/0.13.36...0.13.37) (2024-08-09)
+
+### Bug Fixes
+
+* **dev:** fix custom commands not working in dev console ([#6341](https://github.com/garden-io/garden/issues/6341)) ([6c71c507a](https://github.com/garden-io/garden/commit/6c71c507a))
+* **template:** null-safe error message extraction ([#6358](https://github.com/garden-io/garden/issues/6358)) ([98b50698c](https://github.com/garden-io/garden/commit/98b50698c))
+
+### Improvements
+
+* update kubernetes-client library to version with better auth error handling ([#6343](https://github.com/garden-io/garden/issues/6343)) ([c5f56d9ec](https://github.com/garden-io/garden/commit/c5f56d9ec))
+* add error handler callback to podRunner log streams ([#6339](https://github.com/garden-io/garden/issues/6339)) ([c045254da](https://github.com/garden-io/garden/commit/c045254da))
 <a name="0.13.36"></a>
 ## [0.13.36](https://github.com/garden-io/garden/compare/0.13.35...0.13.36) (2024-08-01)
 

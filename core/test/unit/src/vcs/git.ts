@@ -26,6 +26,7 @@ import {
   explainGitError,
   getCommitIdFromRefList,
   GitCli,
+  hashObject,
   parseGitUrl,
 } from "../../../../src/vcs/git.js"
 import { GitRepoHandler } from "../../../../src/vcs/git-repo.js"
@@ -830,6 +831,24 @@ const commonGitHandlerTests = (gitScanMode: GitScanMode) => {
         expect(files.sort()).to.eql([filePath, symlinkPath])
       })
 
+      it("should include a relative symlink within the path even when target does not exist", async () => {
+        const target = "does-not-exist"
+        const symlinkPath = resolve(tmpPath, "symlink")
+
+        await symlink(target, symlinkPath)
+
+        const files = (
+          await handler.getFiles({
+            path: tmpPath,
+            scanRoot: undefined,
+            exclude: [],
+            log,
+          })
+        ).map((f) => f.path)
+
+        expect(files.sort()).to.eql([symlinkPath])
+      })
+
       it("should exclude a relative symlink that points outside repo root", async () => {
         const subPath = resolve(tmpPath, "subdir")
         await mkdirp(subPath)
@@ -843,6 +862,31 @@ const commonGitHandlerTests = (gitScanMode: GitScanMode) => {
 
         await createFile(filePath)
         await ensureSymlink(join("..", fileName), symlinkPath)
+
+        const files = (
+          await handler.getFiles({
+            path: subPath,
+            scanRoot: undefined,
+            exclude: [],
+            log,
+          })
+        ).map((f) => f.path)
+        expect(files).to.eql([])
+      })
+
+      it("should exclude a relative symlink that points outside repo root even if it does not start with ..", async () => {
+        const subPath = resolve(tmpPath, "subdir")
+        await mkdirp(subPath)
+
+        const _git = new GitCli({ log, cwd: subPath })
+        await _git.exec("init")
+
+        const fileName = "foo"
+        const filePath = resolve(tmpPath, fileName)
+        const symlinkPath = resolve(subPath, "symlink")
+
+        await createFile(filePath)
+        await ensureSymlink(join("hello", "..", "..", fileName), symlinkPath)
 
         const files = (
           await handler.getFiles({
@@ -1203,7 +1247,7 @@ const commonGitHandlerTests = (gitScanMode: GitScanMode) => {
 
       const expected = await getGitHash(git, path)
 
-      const hash = await handler.hashObject(stats, path)
+      const hash = await hashObject(stats, path)
       expect(hash).to.equal(expected)
     })
 
@@ -1217,7 +1261,7 @@ const commonGitHandlerTests = (gitScanMode: GitScanMode) => {
       const files = (await git.exec("ls-files", "-s", path))[0]
       const expected = files.split(" ")[1]
 
-      const hash = await handler.hashObject(stats, path)
+      const hash = await hashObject(stats, path)
       expect(hash).to.equal(expected)
     })
 
@@ -1235,7 +1279,7 @@ const commonGitHandlerTests = (gitScanMode: GitScanMode) => {
       const files = (await git.exec("ls-files", "-s", symlinkPath))[0]
       const expected = files.split(" ")[1]
 
-      const hash = await handler.hashObject(stats, symlinkPath)
+      const hash = await hashObject(stats, symlinkPath)
       expect(hash).to.equal(expected)
     })
   })
@@ -1433,7 +1477,7 @@ const commonGitHandlerTests = (gitScanMode: GitScanMode) => {
         if (!(error instanceof GardenError)) {
           expect.fail("Expected error to be an instance of GardenError")
         }
-        expect(error?.message).to.contain("Invalid username or password.")
+        expect(error?.message).to.contain("Invalid username or ")
       })
 
       it("should update submodules", async () => {
@@ -1571,27 +1615,27 @@ const getTreeVersionTests = (gitScanMode: GitScanMode) => {
       it("should update content hash when include is set and there's a change in the included files of an action", async () => {
         // This test project should not have multiple actions.
         // It tests the case when some new files are added to an included directory.
-        const projectRoot = getDataDir("test-projects", "include-files")
-        const garden = await makeTestGarden(projectRoot)
-        const log = garden.log
-        const graph = await garden.getConfigGraph({ emit: false, log })
-        const buildConfig = graph.getBuild("a").getConfig()
-        const newFilePathBuildA = join(garden.projectRoot, "build-a", "somedir", "foo")
+        const _projectRoot = getDataDir("test-projects", "include-files")
+        const _garden = await makeTestGarden(_projectRoot)
+        const _log = _garden.log
+        const _graph = await _garden.getConfigGraph({ emit: false, log: _log })
+        const buildConfig = _graph.getBuild("a").getConfig()
+        const newFilePathBuildA = join(_garden.projectRoot, "build-a", "somedir", "foo")
 
         try {
-          const version1 = await garden.vcs.getTreeVersion({
-            log: garden.log,
-            projectName: garden.projectName,
+          const version1 = await _garden.vcs.getTreeVersion({
+            log: _garden.log,
+            projectName: _garden.projectName,
             config: buildConfig,
           })
 
           // write new file to the included dir and clear the cache
           await writeFile(newFilePathBuildA, "abcd")
-          garden.vcs.clearTreeCache()
+          _garden.vcs.clearTreeCache()
 
-          const version2 = await garden.vcs.getTreeVersion({
-            log: garden.log,
-            projectName: garden.projectName,
+          const version2 = await _garden.vcs.getTreeVersion({
+            log: _garden.log,
+            projectName: _garden.projectName,
             config: buildConfig,
             force: true,
           })
@@ -1602,40 +1646,40 @@ const getTreeVersionTests = (gitScanMode: GitScanMode) => {
       })
 
       describe("should not update content hash for Deploy, when there's no change in included files of Build", async () => {
-        async function runTest(projectRoot: string) {
-          const garden = await makeTestGarden(projectRoot)
-          const log = garden.log
-          const graph = await garden.getConfigGraph({ emit: false, log })
-          const buildConfig = graph.getBuild("test-build").getConfig()
-          const deployConfig = graph.getDeploy("test-deploy").getConfig()
-          const newFilePath = join(garden.projectRoot, "foo")
+        async function runTest(gardenProjectRoot: string) {
+          const _garden = await makeTestGarden(gardenProjectRoot)
+          const _log = _garden.log
+          const _graph = await _garden.getConfigGraph({ emit: false, log: _log })
+          const buildConfig = _graph.getBuild("test-build").getConfig()
+          const deployConfig = _graph.getDeploy("test-deploy").getConfig()
+          const newFilePath = join(_garden.projectRoot, "foo")
 
           try {
-            const buildVersion1 = await garden.vcs.getTreeVersion({
-              log: garden.log,
-              projectName: garden.projectName,
+            const buildVersion1 = await _garden.vcs.getTreeVersion({
+              log: _garden.log,
+              projectName: _garden.projectName,
               config: buildConfig,
             })
 
-            const deployVersion1 = await garden.vcs.getTreeVersion({
-              log: garden.log,
-              projectName: garden.projectName,
+            const deployVersion1 = await _garden.vcs.getTreeVersion({
+              log: _garden.log,
+              projectName: _garden.projectName,
               config: deployConfig,
             })
 
             // write new file that should not be included and clear the cache
             await writeFile(newFilePath, "abcd")
-            garden.vcs.clearTreeCache()
+            _garden.vcs.clearTreeCache()
 
-            const buildVersion2 = await garden.vcs.getTreeVersion({
-              log: garden.log,
-              projectName: garden.projectName,
+            const buildVersion2 = await _garden.vcs.getTreeVersion({
+              log: _garden.log,
+              projectName: _garden.projectName,
               config: buildConfig,
               force: true,
             })
-            const deployVersion2 = await garden.vcs.getTreeVersion({
-              log: garden.log,
-              projectName: garden.projectName,
+            const deployVersion2 = await _garden.vcs.getTreeVersion({
+              log: _garden.log,
+              projectName: _garden.projectName,
               config: deployConfig,
               force: true,
             })
@@ -1650,40 +1694,40 @@ const getTreeVersionTests = (gitScanMode: GitScanMode) => {
         // The different project structure causes different Git repo roots in scanning mode and different caching behavior.
 
         it("with a flat project/action config", async () => {
-          const projectRoot = getDataDir("test-projects", "config-action-include-flat")
-          await runTest(projectRoot)
+          const _projectRoot = getDataDir("test-projects", "config-action-include-flat")
+          await runTest(_projectRoot)
         })
 
         it("with a structured project/action config", async () => {
-          const projectRoot = getDataDir("test-projects", "config-action-include")
-          await runTest(projectRoot)
+          const _projectRoot = getDataDir("test-projects", "config-action-include")
+          await runTest(_projectRoot)
         })
       })
 
       it("should update content hash when a file is renamed", async () => {
-        const projectRoot = getDataDir("test-projects", "include-files")
-        const garden = await makeTestGarden(projectRoot)
-        const log = garden.log
-        const graph = await garden.getConfigGraph({ emit: false, log })
-        const buildConfig = graph.getBuild("a").getConfig()
-        const newFilePathBuildA = join(garden.projectRoot, "build-a", "somedir", "foo")
-        const renamedFilePathBuildA = join(garden.projectRoot, "build-a", "somedir", "bar")
+        const _projectRoot = getDataDir("test-projects", "include-files")
+        const _garden = await makeTestGarden(_projectRoot)
+        const _log = _garden.log
+        const _graph = await _garden.getConfigGraph({ emit: false, log: _log })
+        const buildConfig = _graph.getBuild("a").getConfig()
+        const newFilePathBuildA = join(_garden.projectRoot, "build-a", "somedir", "foo")
+        const renamedFilePathBuildA = join(_garden.projectRoot, "build-a", "somedir", "bar")
 
         try {
           await writeFile(newFilePathBuildA, "abcd")
-          const version1 = await garden.vcs.getTreeVersion({
-            log: garden.log,
-            projectName: garden.projectName,
+          const version1 = await _garden.vcs.getTreeVersion({
+            log: _garden.log,
+            projectName: _garden.projectName,
             config: buildConfig,
           })
 
           // rename file foo to bar and clear the cache
           await rename(newFilePathBuildA, renamedFilePathBuildA)
-          garden.vcs.clearTreeCache()
+          _garden.vcs.clearTreeCache()
 
-          const version2 = await garden.vcs.getTreeVersion({
-            log: garden.log,
-            projectName: garden.projectName,
+          const version2 = await _garden.vcs.getTreeVersion({
+            log: _garden.log,
+            projectName: _garden.projectName,
             config: buildConfig,
             force: true,
           })
@@ -1695,29 +1739,29 @@ const getTreeVersionTests = (gitScanMode: GitScanMode) => {
 
       // FIXME: this duplicates the test case above; re-implement it properly
       it.skip("should not update content hash when the parent config's enclosing directory is renamed", async () => {
-        const projectRoot = getDataDir("test-projects", "include-exclude")
-        const garden = await makeTestGarden(projectRoot)
-        const log = garden.log
-        const graph = await garden.getConfigGraph({ emit: false, log })
-        const buildConfig = graph.getBuild("a").getConfig()
-        const newFilePathBuildA = join(garden.projectRoot, "build-a", "somedir", "foo")
-        const renamedFilePathBuildA = join(garden.projectRoot, "build-a", "somedir", "bar")
+        const _projectRoot = getDataDir("test-projects", "include-exclude")
+        const _garden = await makeTestGarden(_projectRoot)
+        const _log = _garden.log
+        const _graph = await _garden.getConfigGraph({ emit: false, log: _log })
+        const buildConfig = _graph.getBuild("a").getConfig()
+        const newFilePathBuildA = join(_garden.projectRoot, "build-a", "somedir", "foo")
+        const renamedFilePathBuildA = join(_garden.projectRoot, "build-a", "somedir", "bar")
 
         try {
           await writeFile(newFilePathBuildA, "abcd")
-          const version1 = await garden.vcs.getTreeVersion({
-            log: garden.log,
-            projectName: garden.projectName,
+          const version1 = await _garden.vcs.getTreeVersion({
+            log: _garden.log,
+            projectName: _garden.projectName,
             config: buildConfig,
           })
 
           // rename file foo to bar and clear the cache
           await rename(newFilePathBuildA, renamedFilePathBuildA)
-          garden.vcs.clearTreeCache()
+          _garden.vcs.clearTreeCache()
 
-          const version2 = await garden.vcs.getTreeVersion({
-            log: garden.log,
-            projectName: garden.projectName,
+          const version2 = await _garden.vcs.getTreeVersion({
+            log: _garden.log,
+            projectName: _garden.projectName,
             config: buildConfig,
             force: true,
           })

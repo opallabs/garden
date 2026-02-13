@@ -7,7 +7,7 @@ tocTitle: "`jib-container` Build"
 
 ## Description
 
-Extends the [container type](./container.md) to build the image with [Jib](https://github.com/GoogleContainerTools/jib). Use this to efficiently build container images for Java services. Check out the [jib example](https://github.com/garden-io/garden/tree/0.13.36/examples/jib-container) to see it in action.
+Extends the [container type](./container.md) to build the image with [Jib](https://github.com/GoogleContainerTools/jib). Use this to efficiently build container images for Java services. Check out the [jib example](https://github.com/garden-io/garden/tree/0.13.63/examples/jib-container) to see it in action.
 
 The image is always built locally, directly from the source directory (see the note on that below), before shipping the container image to the right place. You can set `build.tarOnly: true` to only build the image as a tarball.
 
@@ -56,11 +56,9 @@ A description of the action.
 
 By default, the directory where the action is defined is used as the source for the build context.
 
-You can override this by setting either `source.path` to another (POSIX-style) path relative to the action source directory, or `source.repository` to get the source from an external repository.
+You can override the directory that is used for the build context by setting `source.path`.
 
-If using `source.path`, you must make sure the target path is in a git repository.
-
-For `source.repository` behavior, please refer to the [Remote Sources guide](https://docs.garden.io/advanced/using-remote-sources).
+You can use `source.repository` to get the source from an external repository. For more information on remote actions, please refer to the [Remote Sources guide](https://docs.garden.io/bonsai-0.13/advanced/using-remote-sources).
 
 | Type     | Required |
 | -------- | -------- |
@@ -70,7 +68,11 @@ For `source.repository` behavior, please refer to the [Remote Sources guide](htt
 
 [source](#source) > path
 
-A relative POSIX-style path to the source directory for this action. You must make sure this path exists and is in a git repository!
+A relative POSIX-style path to the source directory for this action.
+
+If specified together with `source.repository`, the path will be relative to the repository root.
+
+Otherwise, the path will be relative to the directory containing the Garden configuration file.
 
 | Type        | Required |
 | ----------- | -------- |
@@ -286,7 +288,7 @@ Specify a list of POSIX-style paths or globs that should be included as the buil
 
 If nothing is specified here, the whole directory may be assumed to be included in the build. Providers are sometimes able to infer the list of paths, e.g. from a Dockerfile, but often this is inaccurate (say, if a Dockerfile has an `ADD .` statement) so it may be important to set `include` and/or `exclude` to define the build context. Otherwise you may find unrelated files being included in the build context and the build version, which may result in unnecessarily repeated builds.
 
-You can _exclude_ files using the `exclude` field or by placing `.gardenignore` files in your source tree, which use the same format as `.gitignore` files. See the [Configuration Files guide](https://docs.garden.io/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
+You can _exclude_ files using the `exclude` field or by placing `.gardenignore` files in your source tree, which use the same format as `.gitignore` files. See the [Configuration Files guide](https://docs.garden.io/bonsai-0.13/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
 
 | Type               | Required |
 | ------------------ | -------- |
@@ -455,9 +457,9 @@ The chosen version will be downloaded by Garden and used to define `JAVA_HOME` e
 
 To use an arbitrary JDK distribution, please use the `jdkPath` configuration option.
 
-| Type     | Allowed Values    | Default | Required |
-| -------- | ----------------- | ------- | -------- |
-| `number` | 8, 11, 13, 17, 21 | `11`    | Yes      |
+| Type     | Allowed Values        | Default | Required |
+| -------- | --------------------- | ------- | -------- |
+| `number` | 8, 11, 13, 17, 21, 23 | `11`    | Yes      |
 
 ### `spec.jdkPath`
 
@@ -516,7 +518,7 @@ Specify the image format in the resulting tar file. Only used if `tarOnly: true`
 Defines the location of the custom executable Gradle binary.
 
 If not provided, then the Gradle binary available in the working directory will be used.
-If no Gradle binary found in the working dir, then Gradle 7.5.1 will be downloaded and used.
+If no Gradle binary found in the working dir, then Gradle 7.6.4 will be downloaded and used.
 
 **Note!** Either `jdkVersion` or `jdkPath` will be used to define `JAVA_HOME` environment variable for the custom Gradle.
 To ensure a system JDK usage, please set `jdkPath` to `${local.env.JAVA_HOME}`.
@@ -531,7 +533,7 @@ To ensure a system JDK usage, please set `jdkPath` to `${local.env.JAVA_HOME}`.
 
 Defines the location of the custom executable Maven binary.
 
-If not provided, then Maven 3.8.8 will be downloaded and used.
+If not provided, then Maven 3.9.9 will be downloaded and used.
 
 **Note!** Either `jdkVersion` or `jdkPath` will be used to define `JAVA_HOME` environment variable for the custom Maven.
 To ensure a system JDK usage, please set `jdkPath` to `${local.env.JAVA_HOME}`.
@@ -556,7 +558,7 @@ Defines the Maven phases to be executed during the Garden build step.
 
 Defines the location of the custom executable Maven Daemon binary.
 
-If not provided, then Maven Daemon 0.9.0 will be downloaded and used.
+If not provided, then Maven Daemon 1.0.2 will be downloaded and used.
 
 **Note!** Either `jdkVersion` or `jdkPath` will be used to define `JAVA_HOME` environment variable for the custom Maven Daemon.
 To ensure a system JDK usage, please set `jdkPath` to `${local.env.JAVA_HOME}`.

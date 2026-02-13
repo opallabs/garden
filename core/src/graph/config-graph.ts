@@ -7,7 +7,7 @@
  */
 
 import toposort from "toposort"
-import { flatten, difference, mapValues, cloneDeep, find } from "lodash-es"
+import { flatten, difference, mapValues, find } from "lodash-es"
 import { dedent, naturalList } from "../util/string.js"
 import type { Action, ActionDependencyAttributes, ActionKind, Resolved, ResolvedAction } from "../actions/types.js"
 import { actionReferenceToString } from "../actions/base.js"
@@ -38,6 +38,7 @@ export type RenderedEdge = { dependant: RenderedNode; dependency: RenderedNode }
 export interface RenderedNode {
   kind: ActionKind
   name: string
+  type: string
   moduleName?: string
   key: string
   disabled: boolean
@@ -134,19 +135,6 @@ export abstract class BaseConfigGraph<
 
   validate() {
     // TODO-0.13.0: checks for circular dependencies
-  }
-
-  clone() {
-    const clone = new ConfigGraph({
-      environmentName: this.environmentName,
-      actions: [],
-      moduleGraph: this.moduleGraph,
-      groups: Object.values(this.groups),
-    })
-    for (const key of Object.getOwnPropertyNames(this)) {
-      clone[key] = cloneDeep(this[key])
-    }
-    return clone
   }
 
   /////////////////
@@ -481,19 +469,20 @@ export abstract class BaseConfigGraph<
 
   protected addActionInternal<K extends ActionKind>(action: Action) {
     this.actions[action.kind][action.name] = <PickTypeByKind<K, B, D, R, T>>action
-    const node = this.getNode(action.kind, action.name, action.isDisabled())
+    const node = this.getNode(action.kind, action.type, action.name, action.isDisabled())
 
     for (const dep of action.getDependencyReferences()) {
       this.addRelation({
         dependant: node,
         dependencyKind: dep.kind,
+        dependencyType: dep.type,
         dependencyName: dep.name,
       })
     }
   }
 
   // Idempotent.
-  protected getNode(kind: ActionKind, name: string, disabled: boolean) {
+  protected getNode(kind: ActionKind, type: string, name: string, disabled: boolean) {
     const key = nodeKey(kind, name)
     const existingNode = this.dependencyGraph[key]
     if (existingNode) {
@@ -502,7 +491,7 @@ export abstract class BaseConfigGraph<
       }
       return existingNode
     } else {
-      const newNode = new ConfigGraphNode(kind, name, disabled)
+      const newNode = new ConfigGraphNode(kind, type, name, disabled)
       this.dependencyGraph[key] = newNode
       return newNode
     }
@@ -512,13 +501,15 @@ export abstract class BaseConfigGraph<
   protected addRelation({
     dependant,
     dependencyKind,
+    dependencyType,
     dependencyName,
   }: {
     dependant: ConfigGraphNode
     dependencyKind: ActionKind
+    dependencyType: string
     dependencyName: string
   }) {
-    const dependency = this.getNode(dependencyKind, dependencyName, false)
+    const dependency = this.getNode(dependencyKind, dependencyType, dependencyName, false)
     dependant.addDependency(dependency)
     dependency.addDependant(dependant)
   }
@@ -543,17 +534,18 @@ export class MutableConfigGraph extends ConfigGraph {
     const dependant = this.getActionByRef(by)
     const dependency = this.getActionByRef(on)
 
-    dependant.addDependency({ kind: dependency.kind, name: dependency.name, ...attributes })
+    dependant.addDependency({ kind: dependency.kind, type: dependency.type, name: dependency.name, ...attributes })
 
     this.addRelation({
-      dependant: this.getNode(dependant.kind, dependant.name, dependant.isDisabled()),
+      dependant: this.getNode(dependant.kind, dependant.type, dependant.name, dependant.isDisabled()),
       dependencyKind: dependency.kind,
+      dependencyType: dependency.type,
       dependencyName: dependency.name,
     })
   }
 
-  toConfigGraph() {
-    return this.clone()
+  toConfigGraph(): ConfigGraph {
+    return this
   }
 }
 
@@ -568,6 +560,7 @@ export class ConfigGraphNode {
 
   constructor(
     public kind: ActionKind,
+    public type: string,
     public name: string,
     public disabled: boolean
   ) {
@@ -581,6 +574,7 @@ export class ConfigGraphNode {
       kind: this.kind,
       key: this.name,
       disabled: this.disabled,
+      type: this.type,
     }
   }
 

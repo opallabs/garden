@@ -2,12 +2,12 @@ kind: Deploy
 type: pulumi
 name: k8s-namespace
 description: Creates a k8s namespace.
-dependencies:
-  - build.ensure-pulumi-sdk-for-k8s-namespace
 spec:
   createStack: true
   cacheStatus: true
   stack: k8s-namespace
+  pulumiVarfiles:
+    - pulumi-vars.yaml
   pulumiVariables:
-    kubernetes:context: docker-desktop
+    kubernetes:context: orbstack
     pulumi-k8s:namespace: pulumi-k8s

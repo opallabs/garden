@@ -14,9 +14,9 @@ import type { Dictionary } from "../../../util/util.js"
 import split2 from "split2"
 import { pickBy } from "lodash-es"
 
-export const helmVersion = "3.15.3"
+export const helmVersion = "3.17.2"
 
-export const helm3Spec: PluginToolSpec = {
+export const helmSpec: PluginToolSpec = {
   name: "helm",
   description: `The Helm CLI, v${helmVersion}`,
   version: helmVersion,
@@ -27,7 +27,7 @@ export const helm3Spec: PluginToolSpec = {
       platform: "darwin",
       architecture: "amd64",
       url: `https://get.helm.sh/helm-v${helmVersion}-darwin-amd64.tar.gz`,
-      sha256: "68306cbd9808271cd95974328e4238c052c8495e09b0038828b65190491aeb9c",
+      sha256: "3e240238c7a3a10efd37b8e16615b28e94ba5db5957247bb42009ba6d52f76e9",
       extract: {
         format: "tar",
         targetPath: "darwin-amd64/helm",
@@ -37,7 +37,7 @@ export const helm3Spec: PluginToolSpec = {
       platform: "darwin",
       architecture: "arm64",
       url: `https://get.helm.sh/helm-v${helmVersion}-darwin-arm64.tar.gz`,
-      sha256: "9ed53b19cfd935908c5269ba3e88028462fc4c249f85f937ae8cc04b6fe9cead",
+      sha256: "b843cebcbebc9eccb1e43aba9cca7693d32e9f2c4a35344990e3b7b381933948",
       extract: {
         format: "tar",
         targetPath: "darwin-arm64/helm",
@@ -47,7 +47,7 @@ export const helm3Spec: PluginToolSpec = {
       platform: "linux",
       architecture: "amd64",
       url: `https://get.helm.sh/helm-v${helmVersion}-linux-amd64.tar.gz`,
-      sha256: "ad871aecb0c9fd96aa6702f6b79e87556c8998c2e714a4959bf71ee31282ac9c",
+      sha256: "90c28792a1eb5fb0b50028e39ebf826531ebfcf73f599050dbd79bab2f277241",
       extract: {
         format: "tar",
         targetPath: "linux-amd64/helm",
@@ -57,7 +57,7 @@ export const helm3Spec: PluginToolSpec = {
       platform: "linux",
       architecture: "arm64",
       url: `https://get.helm.sh/helm-v${helmVersion}-linux-arm64.tar.gz`,
-      sha256: "bd57697305ba46fef3299b50168a34faa777dd2cf5b43b50df92cca7ed118cce",
+      sha256: "d78d76ec7625a94991e887ac049d93f44bd70e4876200b945f813c9e1ed1df7c",
       extract: {
         format: "tar",
         targetPath: "linux-arm64/helm",
@@ -67,7 +67,7 @@ export const helm3Spec: PluginToolSpec = {
       platform: "windows",
       architecture: "amd64",
       url: `https://get.helm.sh/helm-v${helmVersion}-windows-amd64.zip`,
-      sha256: "fd857635bbb38b20a91731e5d084c2e21503b0f797b153e3246de01676819f23",
+      sha256: "f76fe76fa116d2bae948aee9bb54ba11bf5b726a09f732ce6a74eb65af2886b1",
       extract: {
         format: "zip",
         targetPath: "windows-amd64/helm.exe",
@@ -117,7 +117,9 @@ export async function helm({
   }
 
   const outputStream = split2()
-  outputStream.on("error", () => {})
+  outputStream.on("error", () => {
+    // Do nothing
+  })
   outputStream.on("data", (line: Buffer) => {
     if (emitLogEvents) {
       ctx.events.emit("log", { timestamp: new Date().toISOString(), msg: line.toString(), ...logEventContext })

@@ -14,26 +14,26 @@ import nock from "nock"
 import { dirname, join, resolve } from "node:path"
 import { Garden } from "../../../src/garden.js"
 import {
+  createProjectConfig,
   expectError,
+  expectFuzzyMatch,
+  getDataDir,
+  getEmptyPluginActionDefinitions,
+  makeExtModuleSourcesGarden,
+  makeExtProjectSourcesGarden,
+  makeModuleConfig,
+  makeTempGarden,
   makeTestGarden,
   makeTestGardenA,
   projectRootA,
-  getDataDir,
-  testModuleVersion,
-  TestGarden,
-  testPlugin,
-  makeExtProjectSourcesGarden,
-  makeExtModuleSourcesGarden,
-  testGitUrlHash,
   resetLocalConfig,
+  TestGarden,
   testGitUrl,
-  expectFuzzyMatch,
-  createProjectConfig,
-  makeModuleConfig,
-  makeTempGarden,
-  getEmptyPluginActionDefinitions,
+  testGitUrlHash,
+  testModuleVersion,
+  testPlugin,
 } from "../../helpers.js"
-import { getNames, findByName, exec } from "../../../src/util/util.js"
+import { exec, findByName, getNames } from "../../../src/util/util.js"
 import type { LinkedSource } from "../../../src/config-store/local.js"
 import type { ModuleVersion, TreeVersion } from "../../../src/vcs/vcs.js"
 import { getModuleVersionString } from "../../../src/vcs/vcs.js"
@@ -42,7 +42,7 @@ import type { ProviderActionName } from "../../../src/plugin/plugin.js"
 import { createGardenPlugin } from "../../../src/plugin/plugin.js"
 import type { ConfigureProviderParams } from "../../../src/plugin/handlers/Provider/configureProvider.js"
 import type { ProjectConfig } from "../../../src/config/project.js"
-import { defaultNamespace } from "../../../src/config/project.js"
+import { defaultNamespace, UnresolvedProviderConfig } from "../../../src/config/project.js"
 import type { ModuleConfig } from "../../../src/config/module.js"
 import { baseModuleSpecSchema } from "../../../src/config/module.js"
 import {
@@ -52,14 +52,12 @@ import {
   gardenEnv,
 } from "../../../src/constants.js"
 import { providerConfigBaseSchema } from "../../../src/config/provider.js"
-import { keyBy, set, mapValues, omit, cloneDeep } from "lodash-es"
+import { cloneDeep, keyBy, mapValues, omit, set } from "lodash-es"
 import { joi } from "../../../src/config/common.js"
 import { defaultDotIgnoreFile, makeTempDir } from "../../../src/util/fs.js"
 import fsExtra from "fs-extra"
-
-const { realpath, writeFile, readFile, remove, pathExists, mkdirp, copy } = fsExtra
 import { dedent, deline, randomString, wordWrap } from "../../../src/util/string.js"
-import { getLinkedSources, addLinkedSources } from "../../../src/util/ext-source-util.js"
+import { addLinkedSources, getLinkedSources } from "../../../src/util/ext-source-util.js"
 import { dump } from "js-yaml"
 import { TestVcsHandler } from "./vcs/vcs.js"
 import type { ActionRouter } from "../../../src/router/router.js"
@@ -69,17 +67,22 @@ import { TreeCache } from "../../../src/cache.js"
 import { omitUndefined } from "../../../src/util/objects.js"
 import { add } from "date-fns"
 import stripAnsi from "strip-ansi"
-import { CloudApi } from "../../../src/cloud/api.js"
+import { GardenCloudApi } from "../../../src/cloud/api.js"
 import { GlobalConfigStore } from "../../../src/config-store/global.js"
-import { LogLevel, getRootLogger } from "../../../src/logger/logger.js"
+import { getRootLogger } from "../../../src/logger/logger.js"
 import { uuidv4 } from "../../../src/util/random.js"
 import { fileURLToPath } from "node:url"
 import { resolveMsg } from "../../../src/logger/log-entry.js"
-import { getCloudDistributionName } from "../../../src/util/cloud.js"
-import { styles } from "../../../src/logger/styles.js"
 import type { RunActionConfig } from "../../../src/actions/run.js"
 import type { ProjectResult } from "@garden-io/platform-api-types"
 import { ProjectStatus } from "@garden-io/platform-api-types"
+import { resolveAction } from "../../../src/graph/actions.js"
+import { serialiseUnresolvedTemplates } from "../../../src/template/types.js"
+import { parseTemplateCollection } from "../../../src/template/templated-collections.js"
+import { deepResolveContext } from "../../../src/config/template-contexts/base.js"
+import { VariablesContext } from "../../../src/config/template-contexts/variables.js"
+
+const { realpath, writeFile, readFile, remove, pathExists, mkdirp, copy } = fsExtra
 
 const moduleDirName = dirname(fileURLToPath(import.meta.url))
 
@@ -199,7 +202,8 @@ describe("Garden", () => {
         },
       })
 
-      expect(garden.variables).to.eql({
+      const variables = deepResolveContext("Garden variables", garden.variables)
+      expect(variables).to.eql({
         some: "variable",
       })
     })
@@ -247,7 +251,8 @@ describe("Garden", () => {
         },
       })
 
-      expect(garden.variables).to.eql({
+      const variables = deepResolveContext("Garden variables", garden.variables)
+      expect(variables).to.eql({
         "some": "banana",
         "service-a-build-command": "OK",
       })
@@ -290,7 +295,7 @@ describe("Garden", () => {
         providers: [{ name: "foo" }],
       })
       config.environments = [] // this is omitted later to simulate a config where envs are not set
-      config = omit(config, "environments") as any as ProjectConfig
+      config = omit(config, "environments") as ProjectConfig
       await expectError(async () => await TestGarden.factory(pathFoo, { config }), {
         contains: ["Error validating project environments", "environments is required"],
       })
@@ -370,7 +375,8 @@ describe("Garden", () => {
     it("should load default varfiles if they exist", async () => {
       const projectRoot = getDataDir("test-projects", "varfiles")
       const garden = await makeTestGarden(projectRoot, {})
-      expect(garden.variables).to.eql({
+      const variables = deepResolveContext("Garden variables", garden.variables)
+      expect(variables).to.eql({
         a: "a",
         b: "B",
         c: "c",
@@ -380,7 +386,8 @@ describe("Garden", () => {
     it("should load custom varfiles if specified", async () => {
       const projectRoot = getDataDir("test-projects", "varfiles-custom")
       const garden = await makeTestGarden(projectRoot, {})
-      expect(garden.variables).to.eql({
+      const variables = deepResolveContext("Garden variables", garden.variables)
+      expect(variables).to.eql({
         a: "a",
         b: "B",
         c: "c",
@@ -395,7 +402,8 @@ describe("Garden", () => {
       garden.variableOverrides["d"] = "from-cli-var"
       const graph = await garden.getConfigGraph({ log: garden.log, emit: false })
       const runAction = graph.getRun("run-a")
-      expect({ ...garden.variables, ...runAction.getVariables() }).to.eql({
+      const resolvedVariables = deepResolveContext("Garden and run-a action variables", runAction.getVariablesContext())
+      expect(resolvedVariables).to.eql({
         a: "from-project-varfile",
         b: "from-action-vars",
         c: "from-action-varfile",
@@ -409,7 +417,8 @@ describe("Garden", () => {
       const garden = await makeTestGarden(projectRoot)
       const graph = await garden.getConfigGraph({ log: garden.log, emit: false })
       const runAction = graph.getRun("run-a")
-      expect(runAction.getVariables()).to.eql({})
+      const runActionVariables = deepResolveContext("Run action variables", runAction.getVariablesContext())
+      expect(runActionVariables).to.eql({})
     })
 
     it("should throw if project root is not in a git repo root", async () => {
@@ -490,7 +499,8 @@ describe("Garden", () => {
         variableOverrides: { "foo": "override", "nested.nestedKey2": "somevalue2new", "key.withdot": "somevalue3new" },
       })
 
-      expect(garden.variables).to.eql({
+      const variables = deepResolveContext("Garden variables", garden.variables)
+      expect(variables).to.eql({
         "foo": "override",
         "bar": "something",
         "nested": {
@@ -610,8 +620,6 @@ describe("Garden", () => {
       }
     })
     context("user is NOT logged in", () => {
-      const log = getRootLogger().createLog()
-
       it("should have domain and id if set in project config", async () => {
         const projectId = uuidv4()
         const projectName = "test"
@@ -647,91 +655,8 @@ describe("Garden", () => {
         expect(garden.cloudDomain).to.eql(DEFAULT_GARDEN_CLOUD_DOMAIN)
         expect(garden.projectId).to.eql(undefined)
       })
-      it("should log an informational message about not being logged in for community edition", async () => {
-        log.root["entries"] = []
-        const projectName = "test"
-        const envName = "default"
-        const config: ProjectConfig = createProjectConfig({
-          name: projectName,
-          path: pathFoo,
-        })
-
-        const garden = await TestGarden.factory(pathFoo, {
-          config,
-          environmentString: envName,
-          log,
-        })
-        const distroName = getCloudDistributionName(garden.cloudDomain || DEFAULT_GARDEN_CLOUD_DOMAIN)
-
-        const expectedLog = log.root.getLogEntries().filter((l) => resolveMsg(l)?.includes(`You are not logged in`))
-
-        expect(expectedLog.length).to.eql(1)
-        expect(expectedLog[0].level).to.eql(LogLevel.info)
-        expect(expectedLog[0].msg).to.eql(
-          `You are not logged in. To use ${distroName}, log in with the ${styles.command("garden login")} command.`
-        )
-      })
-      it("should log a warning message about not being logged in for commercial edition", async () => {
-        log.root["entries"] = []
-        const fakeCloudDomain = "https://example.com"
-        const projectName = "test"
-        const envName = "default"
-        const config: ProjectConfig = createProjectConfig({
-          name: projectName,
-          path: pathFoo,
-          domain: fakeCloudDomain,
-        })
-
-        await TestGarden.factory(pathFoo, {
-          config,
-          environmentString: envName,
-          log,
-        })
-        const distroName = getCloudDistributionName(fakeCloudDomain)
-
-        const expectedLog = log.root.getLogEntries().filter((l) => resolveMsg(l)?.includes(`You are not logged in`))
-
-        expect(expectedLog.length).to.eql(1)
-        expect(expectedLog[0].level).to.eql(LogLevel.warn)
-        expect(expectedLog[0].msg).to.eql(
-          `You are not logged in. To use ${distroName}, log in with the ${styles.command("garden login")} command.`
-        )
-      })
-      context("commands with verbose cloud logs", () => {
-        const commands = ["dev", "serve", "exit", "quit"]
-        for (const command of commands) {
-          it(`should log a warning message at a debug level for command ${command}`, async () => {
-            log.root["entries"] = []
-            const projectName = "test"
-            const envName = "default"
-            const config: ProjectConfig = createProjectConfig({
-              name: projectName,
-              path: pathFoo,
-            })
-
-            const garden = await TestGarden.factory(pathFoo, {
-              config,
-              environmentString: envName,
-              log,
-              commandInfo: {
-                name: command,
-                args: {},
-                opts: {},
-              },
-            })
-            const distroName = getCloudDistributionName(garden.cloudDomain || DEFAULT_GARDEN_CLOUD_DOMAIN)
-
-            const expectedLog = log.root.getLogEntries().filter((l) => resolveMsg(l)?.includes(`You are not logged in`))
-
-            expect(expectedLog.length).to.eql(1)
-            expect(expectedLog[0].level).to.eql(LogLevel.debug)
-            expect(expectedLog[0].msg).to.eql(
-              `You are not logged in. To use ${distroName}, log in with the ${styles.command("garden login")} command.`
-            )
-          })
-        }
-      })
     })
+
     context("user is logged in", () => {
       let configStoreTmpDir: tmp.DirectoryResult
       const log = getRootLogger().createLog()
@@ -744,7 +669,7 @@ describe("Garden", () => {
           refreshToken: "fake-refresh-token",
           validity: add(new Date(), { seconds: validityMs / 1000 }),
         })
-        return CloudApi.factory({ log, cloudDomain: domain, globalConfigStore })
+        return GardenCloudApi.factory({ log, cloudDomain: domain, globalConfigStore })
       }
 
       before(async () => {
@@ -797,12 +722,12 @@ describe("Garden", () => {
           scope.get("/api/token/verify").reply(200, {})
           scope.get(`/api/projects/uid/${projectId}`).reply(200, { data: cloudProject })
 
-          const cloudApi = await makeCloudApi(fakeCloudDomain)
+          const overrideCloudApiFactory = async () => await makeCloudApi(fakeCloudDomain)
 
           const garden = await TestGarden.factory(pathFoo, {
             config,
             environmentString: envName,
-            cloudApi,
+            overrideCloudApiFactory,
           })
 
           expect(garden.cloudDomain).to.eql(fakeCloudDomain)
@@ -816,12 +741,12 @@ describe("Garden", () => {
             .get(`/api/secrets/projectUid/${projectId}/env/${envName}`)
             .reply(200, { data: { SECRET_KEY: "secret-val" } })
 
-          const cloudApi = await makeCloudApi(fakeCloudDomain)
+          const overrideCloudApiFactory = async () => await makeCloudApi(fakeCloudDomain)
 
           const garden = await TestGarden.factory(pathFoo, {
             config,
             environmentString: envName,
-            cloudApi,
+            overrideCloudApiFactory,
           })
 
           expect(garden.secrets).to.eql({ SECRET_KEY: "secret-val" })
@@ -831,7 +756,7 @@ describe("Garden", () => {
           scope.get("/api/token/verify").reply(200, {})
           log.root["entries"] = []
 
-          const cloudApi = await makeCloudApi(fakeCloudDomain)
+          const overrideCloudApiFactory = async () => await makeCloudApi(fakeCloudDomain)
 
           const garden = await TestGarden.factory(pathFoo, {
             config: {
@@ -840,7 +765,7 @@ describe("Garden", () => {
             },
             log,
             environmentString: envName,
-            cloudApi,
+            overrideCloudApiFactory,
           })
 
           const expectedLog = log.root
@@ -861,14 +786,14 @@ describe("Garden", () => {
           scope.get(`/api/projects/uid/${projectId}`).reply(500, {})
           log.root["entries"] = []
 
-          const cloudApi = await makeCloudApi(fakeCloudDomain)
+          const overrideCloudApiFactory = async () => await makeCloudApi(fakeCloudDomain)
 
           let error: Error | undefined
           try {
             await TestGarden.factory(pathFoo, {
               config,
               environmentString: envName,
-              cloudApi,
+              overrideCloudApiFactory,
               log,
             })
           } catch (err) {
@@ -896,14 +821,14 @@ describe("Garden", () => {
           scope.get(`/api/projects/uid/${projectId}`).reply(404, {})
           log.root["entries"] = []
 
-          const cloudApi = await makeCloudApi(fakeCloudDomain)
+          const overrideCloudApiFactory = async () => await makeCloudApi(fakeCloudDomain)
 
           let error: Error | undefined
           try {
             await TestGarden.factory(pathFoo, {
               config,
               environmentString: envName,
-              cloudApi,
+              overrideCloudApiFactory,
               log,
             })
           } catch (err) {
@@ -971,12 +896,12 @@ describe("Garden", () => {
           scope.get(`/api/projects?name=test&exactMatch=true`).reply(200, { data: [cloudProject] })
           scope.get(`/api/projects/uid/${projectId}`).reply(200, { data: cloudProject })
 
-          const cloudApi = await makeCloudApi(DEFAULT_GARDEN_CLOUD_DOMAIN)
+          const overrideCloudApiFactory = async () => await makeCloudApi(DEFAULT_GARDEN_CLOUD_DOMAIN)
 
           const garden = await TestGarden.factory(pathFoo, {
             config,
             environmentString: envName,
-            cloudApi,
+            overrideCloudApiFactory,
           })
 
           expect(garden.cloudDomain).to.eql(DEFAULT_GARDEN_CLOUD_DOMAIN)
@@ -986,7 +911,7 @@ describe("Garden", () => {
         it("should throw if project ID is set in config", async () => {
           scope.get("/api/token/verify").reply(200, {})
 
-          const cloudApi = await makeCloudApi(DEFAULT_GARDEN_CLOUD_DOMAIN)
+          const overrideCloudApiFactory = async () => await makeCloudApi(DEFAULT_GARDEN_CLOUD_DOMAIN)
 
           let error: Error | undefined
           try {
@@ -996,7 +921,7 @@ describe("Garden", () => {
                 id: uuidv4(), // <--- ID is set when it shouldn't
               },
               environmentString: envName,
-              cloudApi,
+              overrideCloudApiFactory,
             })
           } catch (err) {
             if (err instanceof Error) {
@@ -1008,7 +933,7 @@ describe("Garden", () => {
           const expected = wordWrap(
             deline`
               Invalid field 'id' found in project configuration at path tmp. The 'id'
-              field should only be set if using a commerical edition of Garden. Please remove to continue
+              field should only be set if using a commercial edition of Garden. Please remove to continue
               using the Garden community edition.
             `,
             120
@@ -1021,14 +946,14 @@ describe("Garden", () => {
           scope.get(`/api/projects?name=test&exactMatch=true`).reply(500, {})
           log.root["entries"] = []
 
-          const cloudApi = await makeCloudApi(DEFAULT_GARDEN_CLOUD_DOMAIN)
+          const overrideCloudApiFactory = async () => await makeCloudApi(DEFAULT_GARDEN_CLOUD_DOMAIN)
 
           let error: Error | undefined
           try {
             await TestGarden.factory(pathFoo, {
               config,
               environmentString: envName,
-              cloudApi,
+              overrideCloudApiFactory,
               log,
             })
           } catch (err) {
@@ -1059,12 +984,12 @@ describe("Garden", () => {
             .get(`/api/secrets/projectUid/${projectId}/env/${envName}`)
             .reply(200, { data: { SECRET_KEY: "secret-val" } })
 
-          const cloudApi = await makeCloudApi(DEFAULT_GARDEN_CLOUD_DOMAIN)
+          const overrideCloudApiFactory = async () => await makeCloudApi(DEFAULT_GARDEN_CLOUD_DOMAIN)
 
           const garden = await TestGarden.factory(pathFoo, {
             config,
             environmentString: envName,
-            cloudApi,
+            overrideCloudApiFactory,
           })
 
           expect(garden.cloudDomain).to.eql(DEFAULT_GARDEN_CLOUD_DOMAIN)
@@ -1162,7 +1087,7 @@ describe("Garden", () => {
       }
       const garden = await makeTestGardenA([testPluginDupe])
 
-      garden["providerConfigs"].push({ name: "test-plugin-dupe" })
+      garden["providerConfigs"].push(new UnresolvedProviderConfig("test-plugin-dupe", [], { name: "test-plugin-dupe" }))
 
       await expectError(() => garden.getAllPlugins(), {
         contains: "Module type 'test' is declared in multiple plugins: test-plugin, test-plugin-dupe.",
@@ -2185,7 +2110,6 @@ describe("Garden", () => {
             expect(config).to.eql({
               name: "test",
               dependencies: [],
-              path: projectConfig.path,
               foo: "bar",
             })
             return { config: { ...config, foo: "bla" } }
@@ -2497,10 +2421,12 @@ describe("Garden", () => {
       const testA = createGardenPlugin({
         name: "test-a",
         handlers: {
-          getEnvironmentStatus: async () => {
+          prepareEnvironment: async () => {
             return {
-              ready: true,
-              outputs: { foo: "bar" },
+              status: {
+                ready: true,
+                outputs: { foo: "bar" },
+              },
             }
           },
         },
@@ -2911,16 +2837,20 @@ describe("Garden", () => {
         await exec("git", ["add", "."], { cwd: repoPath })
         await exec("git", ["commit", "-m", "foo"], { cwd: repoPath })
 
-        garden.variables.sourceBranch = "main"
+        garden.variables = VariablesContext.forTest({ garden, variablePrecedence: [{ sourceBranch: "main" }] })
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const _garden = garden as any
-        _garden["projectSources"] = [
-          {
-            name: "source-a",
-            // Use a couple of template strings in the repo path
-            repositoryUrl: "file://" + _tmpDir.path + "/${project.name}#${var.sourceBranch}",
-          },
-        ]
+        _garden["projectSources"] = parseTemplateCollection({
+          value: [
+            {
+              name: "source-a",
+              // Use a couple of template strings in the repo path
+              repositoryUrl: "file://" + _tmpDir.path + "/${project.name}#${var.sourceBranch}",
+            },
+          ],
+          source: { path: [] },
+        })
 
         await garden.scanAndAddConfigs()
 
@@ -2939,7 +2869,7 @@ describe("Garden", () => {
       const configB = (await garden.getRawModuleConfigs(["foo-test-b"]))[0]
 
       // note that module config versions should default to v0 (previous version)
-      expect(omitUndefined(configA)).to.eql({
+      expect(serialiseUnresolvedTemplates(omitUndefined(configA))).to.eql({
         apiVersion: GardenApiVersion.v0,
         kind: "Module",
         build: { dependencies: [], timeout: DEFAULT_BUILD_TIMEOUT_SEC },
@@ -2950,7 +2880,7 @@ describe("Garden", () => {
         serviceConfigs: [],
         spec: {
           build: {
-            command: ["${providers.test-plugin.outputs.testKey}"],
+            command: ["${inputs.value}"],
             dependencies: [],
           },
         },
@@ -2971,10 +2901,10 @@ describe("Garden", () => {
           value: "${providers.test-plugin.outputs.testKey}",
         },
       })
-      expect(omitUndefined(configB)).to.eql({
+      expect(serialiseUnresolvedTemplates(omitUndefined(configB))).to.eql({
         apiVersion: GardenApiVersion.v0,
         kind: "Module",
-        build: { dependencies: [{ name: "foo-test-a", copy: [] }], timeout: DEFAULT_BUILD_TIMEOUT_SEC },
+        build: { dependencies: ["${parent.name}-${inputs.name}-a"], timeout: DEFAULT_BUILD_TIMEOUT_SEC },
         include: [],
         configPath: resolve(garden.projectRoot, "modules.garden.yml"),
         name: "foo-test-b",
@@ -2982,7 +2912,7 @@ describe("Garden", () => {
         serviceConfigs: [],
         spec: {
           build: {
-            dependencies: [{ name: "foo-test-a", copy: [] }],
+            dependencies: ["${parent.name}-${inputs.name}-a"],
           },
         },
         testConfigs: [],
@@ -3003,6 +2933,78 @@ describe("Garden", () => {
       })
     })
 
+    it("should correctly resolve module paths in module templates", async () => {
+      const garden = await makeTestGarden(getDataDir("test-projects", "module-templates-path-handling"))
+      await garden.scanAndAddConfigs()
+
+      const configA = (await garden.getRawModuleConfigs(["gen-files-module-a"]))[0]
+      const configB = (await garden.getRawModuleConfigs(["gen-files-module-b"]))[0]
+
+      // note that module config versions should default to v0 (previous version)
+      expect(serialiseUnresolvedTemplates(omitUndefined(configA))).to.eql({
+        apiVersion: GardenApiVersion.v0,
+        kind: "Module",
+        build: { dependencies: [], timeout: DEFAULT_BUILD_TIMEOUT_SEC },
+        include: [],
+        configPath: resolve(garden.projectRoot, "modules.garden.yml"),
+        name: "gen-files-module-a",
+        path: resolve(garden.projectRoot, "module-a"),
+        serviceConfigs: [],
+        spec: {
+          build: {
+            command: ["echo", "hello"],
+            dependencies: [],
+          },
+        },
+        testConfigs: [],
+        type: "exec",
+        taskConfigs: [],
+        generateFiles: [
+          {
+            sourcePath: resolve(garden.projectRoot, "source.txt"),
+            targetPath: "rendered.log",
+          },
+        ],
+        parentName: "module-a",
+        templateName: "gen-files",
+        inputs: {
+          name: "module-a",
+          value: "test",
+        },
+      })
+      expect(serialiseUnresolvedTemplates(omitUndefined(configB))).to.eql({
+        apiVersion: GardenApiVersion.v0,
+        kind: "Module",
+        build: { dependencies: [], timeout: DEFAULT_BUILD_TIMEOUT_SEC },
+        include: [],
+        configPath: resolve(garden.projectRoot, "modules.garden.yml"),
+        name: "gen-files-module-b",
+        path: resolve(garden.projectRoot, "module-b"),
+        serviceConfigs: [],
+        spec: {
+          build: {
+            command: ["echo", "hello"],
+            dependencies: [],
+          },
+        },
+        testConfigs: [],
+        type: "exec",
+        taskConfigs: [],
+        generateFiles: [
+          {
+            targetPath: "rendered.log",
+            sourcePath: resolve(garden.projectRoot, "source.txt"),
+          },
+        ],
+        parentName: "module-b",
+        templateName: "gen-files",
+        inputs: {
+          name: "module-b",
+          value: "test",
+        },
+      })
+    })
+
     it("should resolve actions from config templates", async () => {
       const garden = await makeTestGarden(getDataDir("test-projects", "config-templates"))
       await garden.scanAndAddConfigs()
@@ -3013,15 +3015,15 @@ describe("Garden", () => {
       const deploy = configs.Deploy["foo-test"]
       const test = configs.Test["foo-test"]
 
-      const internal = {
+      const expectedInternal = {
         basePath: garden.projectRoot,
         configFilePath: join(garden.projectRoot, "actions.garden.yml"),
         parentName: "foo",
         templateName: "combo",
         inputs: {
           name: "test",
-          envName: "${environment.name}", // <- should be resolved to itself
-          providerKey: "${providers.test-plugin.outputs.testKey}", // <- should be resolved to itself
+          envName: "${environment.name}",
+          providerKey: "${providers.test-plugin.outputs.testKey}",
         },
       }
 
@@ -3030,15 +3032,19 @@ describe("Garden", () => {
       expect(test).to.exist
 
       expect(build.type).to.equal("test")
-      expect(build.spec.command).to.include(internal.inputs.name) // <- should be resolved
-      expect(omit(build.internal, "yamlDoc")).to.eql(internal)
+      expect(serialiseUnresolvedTemplates(build.spec.command)).to.eql(["echo", "echo-prefix", "${inputs.name}"])
+      expect(serialiseUnresolvedTemplates(omit(build.internal, "yamlDoc"))).to.eql(expectedInternal)
 
-      expect(deploy["build"]).to.equal(`${internal.parentName}-${internal.inputs.name}`) // <- should be resolved
-      expect(omit(deploy.internal, "yamlDoc")).to.eql(internal)
+      expect(serialiseUnresolvedTemplates(deploy["build"])).to.equal("${parent.name}-${inputs.name}")
+      expect(serialiseUnresolvedTemplates(omit(deploy.internal, "yamlDoc"))).to.eql(expectedInternal)
 
-      expect(test.dependencies).to.eql([`build.${internal.parentName}-${internal.inputs.name}`]) // <- should be resolved
-      expect(test.spec.command).to.eql(["echo", internal.inputs.envName, internal.inputs.providerKey]) // <- should be resolved
-      expect(omit(test.internal, "yamlDoc")).to.eql(internal)
+      expect(serialiseUnresolvedTemplates(test.dependencies)).to.eql(["build.${parent.name}-${inputs.name}"])
+      expect(serialiseUnresolvedTemplates(test.spec.command)).to.eql([
+        "echo",
+        "${inputs.envName}",
+        "${inputs.providerKey}",
+      ])
+      expect(serialiseUnresolvedTemplates(omit(test.internal, "yamlDoc"))).to.eql(expectedInternal)
     })
 
     it("should resolve disabled flag in actions and allow two actions with same key if one is disabled", async () => {
@@ -3050,6 +3056,22 @@ describe("Garden", () => {
       const runScript = graph.getRun("run-script")
       expect(runScript.isDisabled()).to.be.false
       expect(runScript.getConfig().spec.command).to.eql(["sh", "-c", "echo 'Hello from local'"])
+    })
+
+    it("should deny variables context in disabled flag for actions with duplicate names", async () => {
+      const garden = await makeTestGarden(getDataDir("test-projects", "disabled-action-with-var-context"))
+
+      // There are 2 'run-script' actions defined in the project, one per environment.
+      await expectError(() => garden.getConfigGraph({ log: garden.log, emit: false }), {
+        contains: [
+          "If you have duplicate action names",
+          "the",
+          "disabled",
+          "flag cannot depend on the",
+          "var",
+          "context",
+        ],
+      })
     })
 
     it("should resolve actions from templated config templates", async () => {
@@ -3080,27 +3102,25 @@ describe("Garden", () => {
         kind: "Run",
         type: "exec",
         name: runNameA,
-        disabled: false,
         spec: {
-          command: ["echo", runNameA],
+          command: ["echo", "${item.value}"],
         },
         internal,
       }
-      expect(omit(runA, "internal")).to.eql(omit(expectedRunA, "internal"))
-      expect(omit(runA.internal, "yamlDoc")).to.eql(expectedRunA.internal)
+      expect(serialiseUnresolvedTemplates(omit(runA, "internal"))).to.eql(omit(expectedRunA, "internal"))
+      expect(serialiseUnresolvedTemplates(omit(runA.internal, "yamlDoc"))).to.eql(expectedRunA.internal)
 
       const expectedRunB: Partial<RunActionConfig> = {
         kind: "Run",
         type: "exec",
         name: runNameB,
-        disabled: false,
         spec: {
-          command: ["echo", runNameB],
+          command: ["echo", "${item.value}"],
         },
         internal,
       }
-      expect(omit(runB, "internal")).to.eql(omit(expectedRunB, "internal"))
-      expect(omit(runB.internal, "yamlDoc")).to.eql(expectedRunB.internal)
+      expect(serialiseUnresolvedTemplates(omit(runB, "internal"))).to.eql(omit(expectedRunB, "internal"))
+      expect(serialiseUnresolvedTemplates(omit(runB.internal, "yamlDoc"))).to.eql(expectedRunB.internal)
     })
 
     it("should resolve a workflow from a template", async () => {
@@ -3116,13 +3136,49 @@ describe("Garden", () => {
         templateName: "workflows",
         inputs: {
           name: "test",
-          envName: "${environment.name}", // <- should be resolved to itself
+          envName: "${environment.name}",
         },
       }
 
       expect(workflow).to.exist
-      expect(workflow.steps).to.eql([{ script: `echo "${internal.inputs.envName}"` }]) // <- should be resolved
-      expect(omit(workflow.internal, "yamlDoc")).to.eql(internal)
+      expect(serialiseUnresolvedTemplates(workflow.steps)).to.eql([{ script: 'echo "${inputs.envName}"' }])
+      expect(serialiseUnresolvedTemplates(omit(workflow.internal, "yamlDoc"))).to.eql(internal)
+    })
+
+    it("should not fail when input is used together with an unresolvable variable in the same template string", async () => {
+      const garden = await makeTestGarden(getDataDir("test-projects", "config-templates-partial"))
+      await garden.scanAndAddConfigs()
+
+      const log = garden.log
+
+      const graph = await garden.getConfigGraph({ log: garden.log, emit: false })
+
+      const resolved = await resolveAction({
+        garden,
+        graph,
+        log,
+        action: graph.getActionByRef({
+          kind: "Build",
+          name: "foo-test-dt",
+        }),
+      })
+      expect(resolved).to.exist
+
+      const variables = resolved.getResolvedVariables()
+      expect(variables).to.deep.eq({
+        myDir: "../../../test",
+        syncTargets: [
+          {
+            source: "../../../foo",
+          },
+          {
+            source: "../../../bar",
+          },
+        ],
+        sync_targets: {
+          test: ["foo", "bar"],
+        },
+      })
     })
 
     it("should throw on duplicate config template names", async () => {
@@ -3154,7 +3210,7 @@ describe("Garden", () => {
     })
 
     // TODO-0.14: remove this and core/test/data/test-projects/project-include-exclude-old-syntax directory
-    it("should respect the modules.include and modules.exclude fields, if specified", async () => {
+    it("should respect the modules.include and modules.exclude fields, if specified (old syntax)", async () => {
       const projectRoot = getDataDir("test-projects", "project-include-exclude-old-syntax")
       const garden = await makeTestGarden(projectRoot)
       const modules = await garden.resolveModules({ log: garden.log })
@@ -3236,16 +3292,11 @@ describe("Garden", () => {
       })
     })
 
-    it.skip("should throw an error if references to missing secrets are present in a module config", async () => {
-      const garden = await makeTestGarden(getDataDir("missing-secrets", "module"))
-      await expectError(() => garden.scanAndAddConfigs(), { contains: "Module module-a: missing" })
-    })
-
     it("should throw when apiVersion v0 is set in a project with action configs", async () => {
       const garden = await makeTestGarden(getDataDir("test-projects", "config-action-kind-v0"))
 
       await expectError(() => garden.scanAndAddConfigs(), {
-        contains: `Action kinds are only supported in project configurations with "apiVersion: ${GardenApiVersion.v1}"`,
+        contains: `Action kinds are only supported in project configurations with "apiVersion: ${GardenApiVersion.v1}" or higher`,
       })
     })
 
@@ -3257,6 +3308,35 @@ describe("Garden", () => {
         expect.fail("Expected scanAndAddConfigs not to throw")
       }
     })
+
+    describe("missing secrets", () => {
+      it("should not throw when an action config references missing secrets", async () => {
+        const garden = await makeTestGarden(getDataDir("missing-secrets", "action"))
+        try {
+          await garden.scanAndAddConfigs()
+        } catch (err) {
+          expect.fail("Expected scanAndAddConfigs not to throw")
+        }
+      })
+
+      it("should not throw when a module config references missing secrets", async () => {
+        const garden = await makeTestGarden(getDataDir("missing-secrets", "module"))
+        try {
+          await garden.scanAndAddConfigs()
+        } catch (err) {
+          expect.fail("Expected scanAndAddConfigs not to throw")
+        }
+      })
+
+      it("should not throw when a workflow config references missing secrets", async () => {
+        const garden = await makeTestGarden(getDataDir("missing-secrets", "workflow"))
+        try {
+          await garden.scanAndAddConfigs()
+        } catch (err) {
+          expect.fail("Expected scanAndAddConfigs not to throw")
+        }
+      })
+    })
   })
 
   describe("resolveModules", () => {
@@ -3267,7 +3347,8 @@ describe("Garden", () => {
       await expectError(() => garden.resolveModules({ log: garden.log }), {
         contains: [
           "Failed resolving one or more modules:",
-          `module-a: Invalid template string (${key}) at path spec.build.command.0: config module-a cannot reference itself.`,
+          `command: ["${key}"]`,
+          `Config module-a cannot reference itself.`,
         ],
       })
     })
@@ -3328,7 +3409,7 @@ describe("Garden", () => {
         }),
       })
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           name: "module-a",
@@ -3375,7 +3456,7 @@ describe("Garden", () => {
         }),
       })
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           name: "module-a",
@@ -3396,7 +3477,7 @@ describe("Garden", () => {
       expect(module.spec.bla).to.eql({ nested: { key: "my value" } })
     })
 
-    it("should pass through runtime template strings when no runtimeContext is provider", async () => {
+    it("should pass through runtime template strings when no runtimeContext is provided", async () => {
       const test = createGardenPlugin({
         name: "test",
         createModuleTypes: [
@@ -3421,7 +3502,7 @@ describe("Garden", () => {
         }),
       })
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           name: "module-a",
@@ -3467,7 +3548,7 @@ describe("Garden", () => {
         }),
       })
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           name: "module-a",
@@ -3488,7 +3569,7 @@ describe("Garden", () => {
       expect(module.spec.bla).to.equal("default")
     })
 
-    it("should correctly resolve template strings with $merge keys", async () => {
+    it("should correctly resolve template strings with merge operator", async () => {
       const test = createGardenPlugin({
         name: "test",
         createModuleTypes: [
@@ -3514,7 +3595,7 @@ describe("Garden", () => {
         }),
       })
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           name: "module-a",
@@ -3572,7 +3653,7 @@ describe("Garden", () => {
         }),
       })
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           name: "module-a",
@@ -3647,7 +3728,7 @@ describe("Garden", () => {
       })
 
       it("resolves referenced project variables", async () => {
-        garden.setModuleConfigs([
+        garden.setPartialModuleConfigs([
           {
             apiVersion: GardenApiVersion.v0,
             name: "module-a",
@@ -3671,7 +3752,7 @@ describe("Garden", () => {
       })
 
       it("resolves referenced module variables", async () => {
-        garden.setModuleConfigs([
+        garden.setPartialModuleConfigs([
           {
             apiVersion: GardenApiVersion.v0,
             name: "module-a",
@@ -3698,7 +3779,7 @@ describe("Garden", () => {
       })
 
       it("prefers module variables over project variables", async () => {
-        garden.setModuleConfigs([
+        garden.setPartialModuleConfigs([
           {
             apiVersion: GardenApiVersion.v0,
             name: "module-a",
@@ -3725,7 +3806,7 @@ describe("Garden", () => {
       })
 
       it("resolves project variables in module variables", async () => {
-        garden.setModuleConfigs([
+        garden.setPartialModuleConfigs([
           {
             apiVersion: GardenApiVersion.v0,
             name: "module-a",
@@ -3752,7 +3833,7 @@ describe("Garden", () => {
       })
 
       it("exposes module vars to other modules", async () => {
-        garden.setModuleConfigs([
+        garden.setPartialModuleConfigs([
           {
             apiVersion: GardenApiVersion.v0,
             name: "module-a",
@@ -3854,7 +3935,7 @@ describe("Garden", () => {
 
       const targetPath = "targetfile.log"
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           name: "module-a",
@@ -3896,7 +3977,7 @@ describe("Garden", () => {
 
       const targetPath = "targetfile.log"
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           name: "module-a",
@@ -3930,7 +4011,7 @@ describe("Garden", () => {
     it("throws helpful error is sourcePath doesn't contain globs and can't be found", async () => {
       const garden = await makeTestGardenA()
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           name: "module-a",
@@ -3980,7 +4061,7 @@ describe("Garden", () => {
         const targetPath = "targetfile.log"
         await writeFile(sourceFullPath, "hello ${project.name}")
 
-        garden.setModuleConfigs([
+        garden.setPartialModuleConfigs([
           {
             apiVersion: GardenApiVersion.v0,
             name: "module-a",
@@ -4039,7 +4120,7 @@ describe("Garden", () => {
         const targetPath = "targetfile.log"
         await writeFile(sourceFullPath, "hello ${project.name}")
 
-        garden.setModuleConfigs([
+        garden.setPartialModuleConfigs([
           {
             apiVersion: GardenApiVersion.v0,
             name: "module-a",
@@ -4223,7 +4304,7 @@ describe("Garden", () => {
         config: projectConfigFoo,
       })
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           name: "foo",
@@ -4272,7 +4353,7 @@ describe("Garden", () => {
         config: projectConfigFoo,
       })
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           name: "foo",
@@ -4313,19 +4394,20 @@ describe("Garden", () => {
         templateName: "combo",
         inputs: {
           name: "test",
-          envName: "local", // <- should be resolved
-          providerKey: "${providers.test-plugin.outputs.testKey}", // <- not resolvable now
+          // these need to be resolved later
+          envName: "${environment.name}",
+          providerKey: "${providers.test-plugin.outputs.testKey}",
         },
       }
 
       expect(build.type).to.equal("test")
-      expect(omit(build.getInternal(), "yamlDoc")).to.eql(internal)
+      expect(serialiseUnresolvedTemplates(omit(build.getInternal(), "yamlDoc"))).to.eql(internal)
 
       expect(deploy.getBuildAction()?.name).to.equal("foo-test") // <- should be resolved
-      expect(omit(deploy.getInternal(), "yamlDoc")).to.eql(internal)
+      expect(serialiseUnresolvedTemplates(omit(deploy.getInternal(), "yamlDoc"))).to.eql(internal)
 
       expect(test.getDependencies().map((a) => a.key())).to.eql(["build.foo-test"]) // <- should be resolved
-      expect(omit(test.getInternal(), "yamlDoc")).to.eql(internal)
+      expect(serialiseUnresolvedTemplates(omit(test.getInternal(), "yamlDoc"))).to.eql(internal)
     })
 
     it("throws with helpful message if action type doesn't exist", async () => {
@@ -4338,7 +4420,7 @@ describe("Garden", () => {
         plugins: [testPlugin()],
       })
 
-      garden.setActionConfigs([
+      garden.setPartialActionConfigs([
         {
           kind: "Build",
           type: "invalidtype",
@@ -4372,7 +4454,7 @@ describe("Garden", () => {
         plugins: [testPluginNoBuildAction],
       })
 
-      garden.setActionConfigs([
+      garden.setPartialActionConfigs([
         {
           kind: "Build",
           type: "test",
@@ -4402,7 +4484,7 @@ describe("Garden", () => {
         plugins: [testPlugin()],
       })
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           name: "module-a",
@@ -4475,6 +4557,52 @@ describe("Garden", () => {
       expect(a.isDisabled()).to.be.false
       expect(b.isDisabled()).to.be.true
     })
+
+    describe("disabled actions", () => {
+      context("should not throw if disabled action does not have a configured provider", () => {
+        it("when action is disabled explicitly via `disabled: true` flag", async () => {
+          // The action 'k8s-deploy' is disabled and configured only in 'no-k8s' environment that does not have kubernetes provider
+          const garden = await makeTestGarden(getDataDir("test-projects", "disabled-action-without-provider"), {
+            environmentString: "no-k8s",
+          })
+
+          // The disabled action with no provider configured should not cause an error
+          const graph = await garden.getConfigGraph({ log: garden.log, emit: false })
+
+          // The action 'k8s-deploy-disabled-via-flag' is disabled via disabled:true flag,
+          // and should be unreachable from graph-lookups.
+          const actionName = "k8s-deploy-disabled-via-flag"
+          void expectError(() => graph.getDeploy(actionName), {
+            contains: `Deploy type=kubernetes name=${actionName} is disabled`,
+          })
+
+          // The enabled acton 'say-hi' should be reachable from graph-lookups
+          const sayHiRun = graph.getRun("say-hi")
+          expect(sayHiRun.isDisabled()).to.be.false
+        })
+
+        it("when action is disabled implicitly via environment config", async () => {
+          // The action 'k8s-deploy' is disabled and configured only in 'no-k8s' environment that does not have kubernetes provider
+          const garden = await makeTestGarden(getDataDir("test-projects", "disabled-action-without-provider"), {
+            environmentString: "no-k8s",
+          })
+
+          // The disabled action with no provider configured should not cause an error
+          const graph = await garden.getConfigGraph({ log: garden.log, emit: false })
+
+          // The action 'k8s-deploy-disabled-via-env-config' is disabled via the environment config,
+          // and should be unreachable from graph-lookups.
+          const actionName = "k8s-deploy-disabled-via-env-config"
+          void expectError(() => graph.getDeploy(actionName), {
+            contains: `Deploy type=kubernetes name=${actionName} is disabled`,
+          })
+
+          // The enabled acton 'say-hi' should be reachable from graph-lookups
+          const sayHiRun = graph.getRun("say-hi")
+          expect(sayHiRun.isDisabled()).to.be.false
+        })
+      })
+    })
   })
 
   context("module type has a base", () => {
@@ -4524,7 +4652,7 @@ describe("Garden", () => {
         },
       })
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           name: "foo",
@@ -4589,7 +4717,7 @@ describe("Garden", () => {
         },
       })
 
-      garden.setModuleConfigs([
+      garden.setPartialModuleConfigs([
         {
           apiVersion: GardenApiVersion.v0,
           name: "foo",
@@ -4674,7 +4802,7 @@ describe("Garden", () => {
           },
         })
 
-        garden.setModuleConfigs([
+        garden.setPartialModuleConfigs([
           {
             apiVersion: GardenApiVersion.v0,
             name: "foo",
@@ -4752,7 +4880,7 @@ describe("Garden", () => {
           },
         })
 
-        garden.setModuleConfigs([
+        garden.setPartialModuleConfigs([
           {
             apiVersion: GardenApiVersion.v0,
             name: "foo",
@@ -4881,6 +5009,7 @@ describe("Garden", () => {
         {
           explicit: true,
           kind: "Build",
+          type: "foo",
           name: "foo",
           needsExecutedOutputs: false,
           needsStaticOutputs: false,
@@ -4915,7 +5044,7 @@ describe("Garden", () => {
         config: projectConfigFoo,
       })
 
-      garden.setActionConfigs([
+      garden.setPartialActionConfigs([
         {
           kind: "Build",
           type: "test",
@@ -4943,6 +5072,7 @@ describe("Garden", () => {
         {
           explicit: true,
           kind: "Build",
+          type: "test",
           name: "foo",
           needsExecutedOutputs: false,
           needsStaticOutputs: false,
@@ -4977,7 +5107,7 @@ describe("Garden", () => {
         config: projectConfigFoo,
       })
 
-      garden.setActionConfigs([
+      garden.setPartialActionConfigs([
         {
           kind: "Build",
           type: "test",
@@ -5072,6 +5202,7 @@ describe("Garden", () => {
         {
           explicit: true,
           kind: "Build",
+          type: "foo",
           name: "foo",
           needsExecutedOutputs: false,
           needsStaticOutputs: false,
@@ -5296,9 +5427,9 @@ describe("Garden", () => {
     })
 
     context("test against fixed version hashes", async () => {
-      const moduleAVersionString = "v-55de0aac5c"
-      const moduleBVersionString = "v-daeabf68fe"
-      const moduleCVersionString = "v-5e9ddea45e"
+      const moduleAVersionString = "v-0caa1284cd"
+      const moduleBVersionString = "v-18fd5b86c0"
+      const moduleCVersionString = "v-c8700eabbf"
 
       it("should return the same module versions between runtimes", async () => {
         const projectRoot = getDataDir("test-projects", "fixed-version-hashes-1")
@@ -5310,9 +5441,18 @@ describe("Garden", () => {
         const moduleA = graph.getModule("module-a")
         const moduleB = graph.getModule("module-b")
         const moduleC = graph.getModule("module-c")
-        expect(moduleA.version.versionString).to.equal(moduleAVersionString)
-        expect(moduleB.version.versionString).to.equal(moduleBVersionString)
-        expect(moduleC.version.versionString).to.equal(moduleCVersionString)
+        expect(moduleA.version.versionString).to.equal(
+          moduleAVersionString,
+          "Code changes have affected module version calculation of module-a."
+        )
+        expect(moduleB.version.versionString).to.equal(
+          moduleBVersionString,
+          "Code changes have affected module version calculation of module-b."
+        )
+        expect(moduleC.version.versionString).to.equal(
+          moduleCVersionString,
+          "Code changes have affected module version calculation of module-c."
+        )
 
         delete process.env.TEST_ENV_VAR
       })
@@ -5327,9 +5467,18 @@ describe("Garden", () => {
         const moduleA = graph.getModule("module-a")
         const moduleB = graph.getModule("module-b")
         const moduleC = graph.getModule("module-c")
-        expect(moduleA.version.versionString).to.equal(moduleAVersionString)
-        expect(moduleB.version.versionString).to.equal(moduleBVersionString)
-        expect(moduleC.version.versionString).to.equal(moduleCVersionString)
+        expect(moduleA.version.versionString).to.equal(
+          moduleAVersionString,
+          "Code changes have affected module version calculation of module-a in different projects."
+        )
+        expect(moduleB.version.versionString).to.equal(
+          moduleBVersionString,
+          "Code changes have affected module version calculation of module-b in different projects."
+        )
+        expect(moduleC.version.versionString).to.equal(
+          moduleCVersionString,
+          "Code changes have affected module version calculation of module-c in different projects."
+        )
 
         delete process.env.MODULE_A_TEST_ENV_VAR
       })

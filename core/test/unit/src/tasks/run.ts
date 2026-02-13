@@ -83,7 +83,7 @@ describe("RunTask", () => {
     it("should cache results", async () => {
       const garden = await TestGarden.factory(tmpDir.path, { config, plugins: [testPlugin] })
 
-      garden.setActionConfigs([
+      garden.setPartialActionConfigs([
         {
           name: "test",
           type: "test",
@@ -122,7 +122,7 @@ describe("RunTask", () => {
 
     it("should emit runStatus events", async () => {
       const garden = await TestGarden.factory(tmpDir.path, { config, plugins: [testPlugin] })
-      garden.setActionConfigs([
+      garden.setPartialActionConfigs([
         {
           name: "test",
           type: "test",
@@ -163,7 +163,7 @@ describe("RunTask", () => {
           payload: {
             actionName: "test",
             actionVersion,
-            actionType: "run",
+            actionType: "test",
             actionKind: "run",
             actionUid,
             moduleName: null,
@@ -181,7 +181,7 @@ describe("RunTask", () => {
           payload: {
             actionName: "test",
             actionVersion,
-            actionType: "run",
+            actionType: "test",
             actionKind: "run",
             actionUid,
             moduleName: null,
@@ -200,7 +200,7 @@ describe("RunTask", () => {
           payload: {
             actionName: "test",
             actionVersion,
-            actionType: "run",
+            actionType: "test",
             actionKind: "run",
             actionUid,
             moduleName: null,
@@ -218,7 +218,7 @@ describe("RunTask", () => {
           payload: {
             actionName: "test",
             actionVersion,
-            actionType: "run",
+            actionType: "test",
             actionKind: "run",
             actionUid,
             moduleName: null,
@@ -236,7 +236,7 @@ describe("RunTask", () => {
     })
     it("should NOT emit runStatus events if statusOnly=true", async () => {
       const garden = await TestGarden.factory(tmpDir.path, { config, plugins: [testPlugin] })
-      garden.setActionConfigs([
+      garden.setPartialActionConfigs([
         {
           name: "test",
           type: "test",

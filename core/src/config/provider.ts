@@ -8,19 +8,18 @@
 
 import { deline } from "../util/string.js"
 import {
-  joiIdentifier,
-  joiUserIdentifier,
-  joiArray,
+  createSchema,
   joi,
+  joiArray,
+  joiIdentifier,
   joiIdentifierMap,
   joiSparseArray,
-  createSchema,
+  joiUserIdentifier,
 } from "./common.js"
-import { collectTemplateReferences } from "../template-string/template-string.js"
 import { ConfigurationError } from "../exceptions.js"
 import type { ModuleConfig } from "./module.js"
 import { moduleConfigSchema } from "./module.js"
-import { memoize, uniq } from "lodash-es"
+import { isNumber, isString, memoize, uniq } from "lodash-es"
 import type { GardenPluginSpec } from "../plugin/plugin.js"
 import type { EnvironmentStatus } from "../plugin/handlers/Provider/getEnvironmentStatus.js"
 import { environmentStatusSchema } from "./status.js"
@@ -30,6 +29,9 @@ import type { ActionState } from "../actions/types.js"
 import type { ValidResultType } from "../tasks/base.js"
 import { uuidv4 } from "../util/random.js"
 import { s } from "./zod.js"
+import { defaultVisitorOpts, getContextLookupReferences, visitAll } from "../template/analysis.js"
+import type { ConfigContext } from "./template-contexts/base.js"
+import type { UnresolvedProviderConfig } from "./project.js"
 
 // TODO: dedupe from the joi schema below
 export const baseProviderConfigSchemaZod = s.object({
@@ -55,10 +57,7 @@ export interface BaseProviderConfig {
   name: string
   dependencies?: string[]
   environments?: string[]
-}
-
-export interface GenericProviderConfig extends BaseProviderConfig {
-  [key: string]: any
+  path?: string
 }
 
 const providerFixedFieldsSchema = memoize(() =>
@@ -116,7 +115,7 @@ export const providerSchema = createSchema({
 })
 
 export interface ProviderMap {
-  [name: string]: Provider<GenericProviderConfig>
+  [name: string]: Provider<BaseProviderConfig>
 }
 
 export const defaultProviders = [{ name: "container" }]
@@ -142,7 +141,7 @@ export function providerFromConfig({
   status,
 }: {
   plugin: GardenPluginSpec
-  config: GenericProviderConfig
+  config: BaseProviderConfig
   dependencies: ProviderMap
   moduleConfigs: ModuleConfig[]
   status: EnvironmentStatus
@@ -164,34 +163,55 @@ export function providerFromConfig({
  * Given a plugin and its provider config, return a list of dependency names based on declared dependencies,
  * as well as implicit dependencies based on template strings.
  */
-export async function getAllProviderDependencyNames(plugin: GardenPluginSpec, config: GenericProviderConfig) {
+export function getAllProviderDependencyNames(
+  plugin: GardenPluginSpec,
+  config: UnresolvedProviderConfig,
+  context: ConfigContext
+) {
   return uniq([
     ...(plugin.dependencies || []).map((d) => d.name),
     ...(config.dependencies || []),
-    ...getProviderTemplateReferences(config),
+    ...getProviderTemplateReferences(config, context),
   ]).sort()
 }
 
 /**
  * Given a provider config, return implicit dependencies based on template strings.
  */
-export function getProviderTemplateReferences(config: GenericProviderConfig) {
-  const references = collectTemplateReferences(config)
+export function getProviderTemplateReferences(config: UnresolvedProviderConfig, context: ConfigContext) {
   const deps: string[] = []
 
-  for (const key of references) {
-    if (key[0] === "providers") {
-      const providerName = key[1] as string
-      if (!providerName) {
-        throw new ConfigurationError({
-          message: deline`
-          Invalid template key '${key.join(".")}' in configuration for provider '${config.name}'. You must
+  const generator = getContextLookupReferences(
+    visitAll({
+      value: config.unresolvedConfig,
+      opts: defaultVisitorOpts,
+    }),
+    context,
+    {}
+  )
+  for (const finding of generator) {
+    const keyPath = finding.keyPath
+    if (keyPath[0] !== "providers") {
+      continue
+    }
+
+    const providerName = keyPath[1]
+    if (!providerName || isNumber(providerName)) {
+      throw new ConfigurationError({
+        message: deline`s
+          Invalid template key '${keyPath.join(".")}' in configuration for provider '${config.name}'. You must
           specify a provider name as well (e.g. \${providers.my-provider}).
         `,
-        })
-      }
-      deps.push(providerName)
+      })
     }
+    if (!isString(providerName)) {
+      const err = providerName.getError()
+      throw new ConfigurationError({
+        message: `Found invalid provider reference: ${err.message}`,
+      })
+    }
+
+    deps.push(providerName)
   }
 
   return uniq(deps).sort()

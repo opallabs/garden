@@ -7,7 +7,7 @@ tocTitle: "`terraform`"
 
 ## Description
 
-This provider allows you to integrate Terraform stacks into your Garden project. See the [Terraform guide](https://docs.garden.io/advanced/terraform) for details and usage information.
+This provider allows you to integrate Terraform stacks into your Garden project. See the [Terraform guide](https://docs.garden.io/bonsai-0.13/advanced/terraform) for details and usage information.
 
 Below is the full schema reference for the provider configuration. For an introduction to configuring a Garden project with providers, please look at our [configuration guide](../../using-garden/configuration-overview.md).
 
@@ -41,7 +41,7 @@ providers:
     # Specify the path to a Terraform config directory, that should be resolved when initializing the provider. This
     # is useful when other providers need to be able to reference the outputs from the stack.
     #
-    # See the [Terraform guide](https://docs.garden.io/advanced/terraform) for more information.
+    # See the [Terraform guide](https://docs.garden.io/bonsai-0.13/advanced/terraform) for more information.
     initRoot:
 
     # A map of variables to use when applying Terraform stacks. You can define these here, in individual
@@ -53,6 +53,19 @@ providers:
 
     # Use the specified Terraform workspace.
     workspace:
+
+    # Set to `true` to make logs from Terraform Deploy actions visible in Garden Cloud/Enterprise. Defaults to `false`
+    streamLogsToCloud: false
+
+    # Configure the Terraform backend.
+    #
+    # The key-value pairs defined here are set as the `-backend-config` options when Garden
+    # runs `terraform init`.
+    #
+    # This can be used to dynamically set a Terraform backend depending on the environment.
+    #
+    # If Garden sees that the backend has changes, it'll re-initialize Terraform and set the new values.
+    backendConfig:
 ```
 ## Configuration Keys
 
@@ -144,7 +157,7 @@ If set to true, Garden will automatically run `terraform apply -auto-approve` wh
 
 Specify the path to a Terraform config directory, that should be resolved when initializing the provider. This is useful when other providers need to be able to reference the outputs from the stack.
 
-See the [Terraform guide](https://docs.garden.io/advanced/terraform) for more information.
+See the [Terraform guide](https://docs.garden.io/bonsai-0.13/advanced/terraform) for more information.
 
 | Type        | Required |
 | ----------- | -------- |
@@ -180,4 +193,40 @@ Use the specified Terraform workspace.
 | Type     | Required |
 | -------- | -------- |
 | `string` | No       |
+
+### `providers[].streamLogsToCloud`
+
+[providers](#providers) > streamLogsToCloud
+
+Set to `true` to make logs from Terraform Deploy actions visible in Garden Cloud/Enterprise. Defaults to `false`
+
+| Type      | Default | Required |
+| --------- | ------- | -------- |
+| `boolean` | `false` | No       |
+
+### `providers[].backendConfig`
+
+[providers](#providers) > backendConfig
+
+Configure the Terraform backend.
+
+The key-value pairs defined here are set as the `-backend-config` options when Garden
+runs `terraform init`.
+
+This can be used to dynamically set a Terraform backend depending on the environment.
+
+If Garden sees that the backend has changes, it'll re-initialize Terraform and set the new values.
+
+| Type     | Required |
+| -------- | -------- |
+| `object` | No       |
+
+Example:
+
+```yaml
+providers:
+  - backendConfig:
+        bucket: ${environment.name}-bucket
+        key: tf-state/${local.username}/terraform.tfstate
+```
 

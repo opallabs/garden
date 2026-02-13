@@ -48,11 +48,9 @@ A description of the action.
 
 By default, the directory where the action is defined is used as the source for the build context.
 
-You can override this by setting either `source.path` to another (POSIX-style) path relative to the action source directory, or `source.repository` to get the source from an external repository.
+You can override the directory that is used for the build context by setting `source.path`.
 
-If using `source.path`, you must make sure the target path is in a git repository.
-
-For `source.repository` behavior, please refer to the [Remote Sources guide](https://docs.garden.io/advanced/using-remote-sources).
+You can use `source.repository` to get the source from an external repository. For more information on remote actions, please refer to the [Remote Sources guide](https://docs.garden.io/bonsai-0.13/advanced/using-remote-sources).
 
 | Type     | Required |
 | -------- | -------- |
@@ -62,7 +60,11 @@ For `source.repository` behavior, please refer to the [Remote Sources guide](htt
 
 [source](#source) > path
 
-A relative POSIX-style path to the source directory for this action. You must make sure this path exists and is in a git repository!
+A relative POSIX-style path to the source directory for this action.
+
+If specified together with `source.repository`, the path will be relative to the repository root.
+
+Otherwise, the path will be relative to the directory containing the Garden configuration file.
 
 | Type        | Required |
 | ----------- | -------- |
@@ -148,7 +150,7 @@ For actions other than _Build_ actions, this is usually not necessary to specify
 
 _Build_ actions have a different behavior, since they generally are based on some files in the source tree, so please reference the docs for more information on those.
 
-Note that you can also _exclude_ files using the `exclude` field or by placing `.gardenignore` files in your source tree, which use the same format as `.gitignore` files. See the [Configuration Files guide](https://docs.garden.io/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
+Note that you can also _exclude_ files using the `exclude` field or by placing `.gardenignore` files in your source tree, which use the same format as `.gitignore` files. See the [Configuration Files guide](https://docs.garden.io/bonsai-0.13/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
 
 | Type               | Required |
 | ------------------ | -------- |
@@ -166,7 +168,7 @@ include:
 
 Specify a list of POSIX-style paths or glob patterns that should be explicitly excluded from the action's version.
 
-For actions other than _Build_ actions, this is usually not necessary to specify, or is implicitly inferred. For _Deploy_, _Run_ and _Test_ actions, the exclusions specified here only applied on top of explicitly set `include` paths, or such paths inferred by providers. See the [Configuration Files guide](https://docs.garden.io/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
+For actions other than _Build_ actions, this is usually not necessary to specify, or is implicitly inferred. For _Deploy_, _Run_ and _Test_ actions, the exclusions specified here only applied on top of explicitly set `include` paths, or such paths inferred by providers. See the [Configuration Files guide](https://docs.garden.io/bonsai-0.13/using-garden/configuration-overview#including-excluding-files-and-directories) for details.
 
 Unlike the `scan.exclude` field in the project config, the filters here have _no effect_ on which files and directories are watched for changes when watching is enabled. Use the project `scan.exclude` field to affect those, if you have large directories that should not be watched for changes.
 
@@ -319,6 +321,24 @@ Specify the path to the Pulumi project root, relative to the deploy action's roo
 | ----------- | ------- | -------- |
 | `posixPath` | `"."`   | No       |
 
+### `spec.useNewPulumiVarfileSchema`
+
+[spec](#spec) > useNewPulumiVarfileSchema
+
+If set to true, the deploy action will use the new Pulumi varfile schema, which does not nest all variables under
+the 'config' key automatically like the old schema. This allow setting variables at the root level of the varfile
+that don't belong to the 'config' key. Example:
+```
+config:
+  myVar: value
+secretsprovider: gcpkms://projects/xyz/locations/global/keyRings/pulumi/cryptoKeys/pulumi-secrets
+```
+For more information see [this guide on pulumi varfiles and variables](https://docs.garden.io/pulumi-plugin/about#pulumi-varfile-schema)
+
+| Type      | Default | Required |
+| --------- | ------- | -------- |
+| `boolean` | `false` | No       |
+
 ### `spec.pulumiVariables`
 
 [spec](#spec) > pulumiVariables
@@ -340,7 +360,7 @@ Instead, use pulumi stack references when using the `cacheStatus` config option.
 
 [spec](#spec) > pulumiVarfiles
 
-Specify one or more paths (relative to the deploy action's root) to YAML files containing pulumi config variables.
+Specify one or more paths (relative to the deploy action's root) to YAML files containing pulumi configuration.
 
 Templated paths that resolve to `null`, `undefined` or an empty string are ignored.
 
@@ -351,8 +371,8 @@ value type.
 
 If one or more varfiles is not found, no error is thrown (that varfile path is simply ignored).
 
-Note: There is no need to nest the variables under a `config` field as is done in a pulumi
-config. Simply specify all the config variables at the top level.
+Note: The old varfile schema nests all variables under the 'config' key automatically. If you need to set variables
+at the root level of the varfile that don't belong to the 'config' key, set `useNewPulumiVarfileSchema` to true.
 
 | Type               | Default | Required |
 | ------------------ | ------- | -------- |
@@ -440,6 +460,19 @@ The name of the pulumi stack to use. Defaults to the current environment name.
 | Type     | Required |
 | -------- | -------- |
 | `string` | No       |
+
+### `spec.showSecretsInOutput`
+
+[spec](#spec) > showSecretsInOutput
+
+When set to true, stack outputs which are marked as secrets will be shown in the output.
+
+By default, Pulumi will print secret stack outputs as the string '[secret]' instead of
+the true content of the output.
+
+| Type      | Default | Required |
+| --------- | ------- | -------- |
+| `boolean` | `false` | No       |
 
 
 ## Outputs

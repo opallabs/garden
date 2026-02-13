@@ -27,7 +27,7 @@ import { realpath } from "fs/promises"
 
 const { pathExists } = fsExtra
 
-type ScanRepoParams = Pick<GetFilesParams, "log" | "path" | "pathDescription" | "failOnPrompt">
+type ScanRepoParams = Pick<GetFilesParams, "log" | "path" | "pathDescription" | "failOnPrompt" | "hashUntrackedFiles">
 
 interface GitRepoGetFilesParams extends GetFilesParams {
   scanFromProjectRoot: boolean
@@ -162,6 +162,7 @@ export class GitRepoHandler extends AbstractGitHandler {
       path: scanRoot,
       pathDescription: pathDescription || "repository",
       failOnPrompt,
+      hashUntrackedFiles: params.hashUntrackedFiles,
     })
 
     const filesAtPath = fileTree.getFilesAtPath(path)
@@ -176,7 +177,6 @@ export class GitRepoHandler extends AbstractGitHandler {
 
     const filtered = this.filterPaths({
       files: filesAtPath,
-      log,
       path,
       augmentedIncludes,
       augmentedExcludes,
@@ -190,14 +190,12 @@ export class GitRepoHandler extends AbstractGitHandler {
   }
 
   private filterPaths({
-    log,
     files,
     path,
     augmentedIncludes,
     augmentedExcludes,
     filter,
   }: {
-    log: GetFilesParams["log"]
     files: VcsFile[]
     path: string
     augmentedIncludes: string[]
@@ -213,7 +211,6 @@ export class GitRepoHandler extends AbstractGitHandler {
       // Previously we prepended the module path to the globs
       // but that caused issues with the glob matching on windows due to backslashes
       const relativePath = p.replace(`${path}${sep}`, "")
-      log.silly(() => `Checking if ${relativePath} matches include/exclude globs`)
       return matchPath(relativePath, augmentedIncludes, augmentedExcludes)
     })
   }

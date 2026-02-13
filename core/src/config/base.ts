@@ -8,17 +8,14 @@
 
 import dotenv from "dotenv"
 import { sep, resolve, relative, basename, dirname, join } from "path"
-import { load } from "js-yaml"
 import { lint } from "yaml-lint"
-import fsExtra from "fs-extra"
-
-const { pathExists, readFile } = fsExtra
-import { omit, isPlainObject, isArray } from "lodash-es"
+import { omit, isPlainObject } from "lodash-es"
 import type { BuildDependencyConfig, ModuleConfig } from "./module.js"
 import { coreModuleSpecSchema, baseModuleSchemaKeys } from "./module.js"
-import { ConfigurationError, FilesystemError, ParameterError } from "../exceptions.js"
+import { ConfigurationError, FilesystemError, isErrnoException, ParameterError } from "../exceptions.js"
 import { DEFAULT_BUILD_TIMEOUT_SEC, GardenApiVersion } from "../constants.js"
 import type { ProjectConfig } from "../config/project.js"
+import type { ConfigSource } from "./validation.js"
 import { validateWithPath } from "./validation.js"
 import { defaultDotIgnoreFile, listDirectory } from "../util/fs.js"
 import { isConfigFilename } from "../util/fs.js"
@@ -26,15 +23,21 @@ import type { ConfigTemplateKind } from "./config-template.js"
 import { isNotNull, isTruthy } from "../util/util.js"
 import type { DeepPrimitiveMap, PrimitiveMap } from "./common.js"
 import { createSchema, joi } from "./common.js"
-import { emitNonRepeatableWarning } from "../warnings.js"
 import type { ActionKind, BaseActionConfig } from "../actions/types.js"
 import { actionKinds } from "../actions/types.js"
-import { mayContainTemplateString } from "../template-string/template-string.js"
+import { isUnresolved } from "../template/templated-strings.js"
 import type { Log } from "../logger/log-entry.js"
 import type { Document, DocumentOptions } from "yaml"
 import { parseAllDocuments } from "yaml"
-import { dedent, deline } from "../util/string.js"
-import { makeDocsLinkStyled } from "../docs/common.js"
+import { dedent } from "../util/string.js"
+import { profileAsync } from "../util/profiling.js"
+import { readFile } from "fs/promises"
+import { LRUCache } from "lru-cache"
+import { parseTemplateCollection } from "../template/templated-collections.js"
+import { evaluate } from "../template/evaluate.js"
+import { GenericContext } from "./template-contexts/base.js"
+import { reportDeprecatedFeatureUsage } from "../util/deprecations.js"
+import { resolveApiVersion } from "../project-api-version.js"
 
 export const configTemplateKind = "ConfigTemplate"
 export const renderTemplateKind = "RenderTemplate"
@@ -54,6 +57,7 @@ export type ObjectPath = (string | number)[]
 
 export interface YamlDocumentWithSource extends Document {
   source: string
+  filename: string | undefined
 }
 
 export function getEffectiveConfigFileLocation(actionConfig: BaseActionConfig): string {
@@ -125,11 +129,17 @@ export const allConfigKinds = ["Module", "Workflow", "Project", configTemplateKi
  * @param sourceDescription - A description of the location of the yaml file, e.g. "bar.yaml at directory /foo/".
  * @param version - YAML standard version. Defaults to "1.2"
  */
-export async function loadAndValidateYaml(
-  content: string,
-  sourceDescription: string,
-  version: DocumentOptions["version"] = "1.2"
-): Promise<YamlDocumentWithSource[]> {
+export async function loadAndValidateYaml({
+  content,
+  sourceDescription,
+  filename,
+  version = "1.2",
+}: {
+  content: string
+  sourceDescription: string
+  filename: string | undefined
+  version?: DocumentOptions["version"]
+}): Promise<YamlDocumentWithSource[]> {
   try {
     return Array.from(parseAllDocuments(content, { merge: true, strict: false, version }) || []).map((doc) => {
       if (doc.errors.length > 0) {
@@ -142,6 +152,7 @@ export async function loadAndValidateYaml(
 
       const docWithSource = doc as YamlDocumentWithSource
       docWithSource.source = content
+      docWithSource.filename = filename
 
       return docWithSource
     })
@@ -197,7 +208,11 @@ export async function validateRawConfig({
   projectRoot: string
   allowInvalid?: boolean
 }) {
-  let rawSpecs = await loadAndValidateYaml(rawConfig, `${basename(configPath)} in directory ${dirname(configPath)}`)
+  let rawSpecs = await loadAndValidateYaml({
+    content: rawConfig,
+    sourceDescription: `${basename(configPath)} in directory ${dirname(configPath)}`,
+    filename: configPath,
+  })
 
   // Ignore empty resources
   rawSpecs = rawSpecs.filter(Boolean)
@@ -206,7 +221,16 @@ export async function validateRawConfig({
     .map((s) => {
       const relPath = relative(projectRoot, configPath)
       const description = `config at ${relPath}`
-      return prepareResource({ log, doc: s, configFilePath: configPath, projectRoot, description, allowInvalid })
+      return prepareResource({
+        log,
+        doc: s,
+        spec: s.toJS(),
+        parse: true,
+        configFilePath: configPath,
+        projectRoot,
+        description,
+        allowInvalid,
+      })
     })
     .filter(isNotNull)
   return resources
@@ -228,18 +252,20 @@ export function prepareResource({
   configFilePath,
   projectRoot,
   description,
+  spec,
   allowInvalid = false,
+  parse = false,
 }: {
   log: Log
-  doc: YamlDocumentWithSource
+  spec: any
+  doc: YamlDocumentWithSource | undefined
   configFilePath: string
   projectRoot: string
   description: string
   allowInvalid?: boolean
+  parse?: boolean
 }): GardenResource | ModuleConfig | null {
   const relPath = relative(projectRoot, configFilePath)
-
-  const spec = doc.toJS()
 
   if (spec === null) {
     return null
@@ -251,13 +277,26 @@ export function prepareResource({
     })
   }
 
+  if (parse) {
+    for (const k in spec) {
+      // TODO: should we do this here? would be good to do it as early as possible.
+      spec[k] = parseTemplateCollection({
+        value: spec[k],
+        source: {
+          yamlDoc: doc,
+          path: [k],
+        },
+      })
+    }
+  }
+
   let kind = spec.kind
 
   const basePath = dirname(configFilePath)
 
   if (!allowInvalid) {
     for (const field of noTemplateFields) {
-      if (spec[field] && mayContainTemplateString(spec[field])) {
+      if (spec[field] && isUnresolved(spec[field])) {
         throw new ConfigurationError({
           message: `Resource in ${relPath} has a template string in field '${field}', which does not allow templating.`,
         })
@@ -331,15 +370,16 @@ function handleDotIgnoreFiles(log: Log, projectSpec: ProjectConfig) {
     return projectSpec
   }
 
+  reportDeprecatedFeatureUsage({
+    log,
+    deprecation: "dotIgnoreFiles",
+  })
+
   if (dotIgnoreFiles.length === 0) {
     return { ...projectSpec, dotIgnoreFile: defaultDotIgnoreFile }
   }
 
   if (dotIgnoreFiles.length === 1) {
-    emitNonRepeatableWarning(
-      log,
-      deline`Multi-valued project configuration field \`dotIgnoreFiles\` is deprecated in 0.13 and will be removed in 0.14. Please use single-valued \`dotIgnoreFile\` instead.`
-    )
     return { ...projectSpec, dotIgnoreFile: dotIgnoreFiles[0] }
   }
 
@@ -354,15 +394,15 @@ function handleProjectModules(log: Log, projectSpec: ProjectConfig): ProjectConf
   // Field 'modules' was intentionally removed from the internal interface `ProjectConfig`,
   // but it still can be presented in the runtime if the old config format is used.
   if (projectSpec["modules"]) {
-    emitNonRepeatableWarning(
+    reportDeprecatedFeatureUsage({
       log,
-      "Project configuration field `modules` is deprecated in 0.13 and will be removed in 0.14. Please use the `scan` field instead."
-    )
-    const scanConfig = projectSpec.scan || {}
+      deprecation: "projectConfigModules",
+    })
+    let scanConfig = projectSpec.scan || {}
     for (const key of ["include", "exclude"]) {
       if (projectSpec["modules"][key]) {
         if (!scanConfig[key]) {
-          scanConfig[key] = projectSpec["modules"][key]
+          scanConfig = { ...scanConfig, [key]: projectSpec["modules"][key] }
         } else {
           log.warn(
             `Project-level \`${key}\` is set both in \`modules.${key}\` and \`scan.${key}\`. The value from \`scan.${key}\` will be used (and the value from \`modules.${key}\` will not have any effect).`
@@ -377,35 +417,12 @@ function handleProjectModules(log: Log, projectSpec: ProjectConfig): ProjectConf
   return projectSpec
 }
 
-function handleMissingApiVersion(log: Log, projectSpec: ProjectConfig): ProjectConfig {
-  // We conservatively set the apiVersion to be compatible with 0.12.
-  if (projectSpec["apiVersion"] === undefined) {
-    emitNonRepeatableWarning(
-      log,
-      `"apiVersion" is missing in the Project config. Assuming "${
-        GardenApiVersion.v0
-      }" for backwards compatibility with 0.12. The "apiVersion"-field is mandatory when using the new action Kind-configs. A detailed migration guide is available at ${makeDocsLinkStyled("guides/migrating-to-bonsai")}`
-    )
-
-    return { ...projectSpec, apiVersion: GardenApiVersion.v0 }
-  } else {
-    if (projectSpec["apiVersion"] === GardenApiVersion.v0) {
-      emitNonRepeatableWarning(
-        log,
-        `Project is configured with \`apiVersion: ${GardenApiVersion.v0}\`, running with backwards compatibility.`
-      )
-    } else if (projectSpec["apiVersion"] !== GardenApiVersion.v1) {
-      throw new ConfigurationError({
-        message: `Project configuration with \`apiVersion: ${projectSpec["apiVersion"]}\` is not supported. Valid values are ${GardenApiVersion.v1} or ${GardenApiVersion.v0}.`,
-      })
-    }
-  }
-
-  return projectSpec
+function handleApiVersion(log: Log, projectSpec: ProjectConfig): ProjectConfig {
+  return { ...projectSpec, apiVersion: resolveApiVersion(projectSpec, log) }
 }
 
 const bonsaiDeprecatedConfigHandlers: DeprecatedConfigHandler[] = [
-  handleMissingApiVersion,
+  handleApiVersion,
   handleDotIgnoreFiles,
   handleProjectModules,
 ]
@@ -419,18 +436,9 @@ export function prepareProjectResource(log: Log, spec: any): ProjectConfig {
 }
 
 export function prepareModuleResource(spec: any, configPath: string, projectRoot: string): ModuleConfig {
-  // We allow specifying modules by name only as a shorthand:
-  //   dependencies:
-  //   - foo-module
-  //   - name: foo-module // same as the above
-  // Empty strings and nulls are omitted from the array.
-  let dependencies: BuildDependencyConfig[] = spec.build?.dependencies || []
+  spec.build = evaluate(spec.build, { context: new GenericContext("empty", {}), opts: {} }).resolved
 
-  if (spec.build && spec.build.dependencies && isArray(spec.build.dependencies)) {
-    // We call `prepareBuildDependencies` on `spec.build.dependencies` again in `resolveModuleConfig` to ensure that
-    // any dependency configs whose module names resolved to null get filtered out.
-    dependencies = prepareBuildDependencies(spec.build.dependencies)
-  }
+  const dependencies: BuildDependencyConfig[] = spec.build?.dependencies || []
 
   const cleanedSpec = {
     ...omit(spec, baseModuleSchemaKeys()),
@@ -443,7 +451,7 @@ export function prepareModuleResource(spec: any, configPath: string, projectRoot
   }
 
   // Built-in keys are validated here and the rest are put into the `spec` field
-  const path = dirname(configPath)
+  const path = spec.path ? resolve(dirname(configPath), spec.path) : dirname(configPath)
   const config: ModuleConfig = {
     apiVersion: spec.apiVersion || GardenApiVersion.v0,
     kind: "Module",
@@ -553,70 +561,145 @@ export async function findProjectConfig({
   return
 }
 
-export async function loadVarfile({
+type LoadedVarfile = { data: PrimitiveMap; source: ConfigSource }
+const loadVarfileCache = new LRUCache<string, Promise<LoadedVarfile>>({
+  max: 10000,
+  ttl: 30000,
+  ttlAutopurge: true,
+})
+
+export function clearVarfileCache() {
+  loadVarfileCache.clear()
+}
+
+export const loadVarfile = profileAsync(async function loadVarfile({
   configRoot,
   path,
   defaultPath,
   optional = false,
+  log,
 }: {
   // project root (when resolving project config) or module root (when resolving module config)
   configRoot: string
   path: string | undefined
   defaultPath: string | undefined
   optional?: boolean
-}): Promise<PrimitiveMap> {
-  if (!path && !defaultPath) {
+  log?: Log
+}) {
+  const pathOrDefault = path || defaultPath
+  if (!pathOrDefault) {
     throw new ParameterError({
       message: `Neither a path nor a defaultPath was provided. Config root: ${configRoot}`,
     })
   }
-  const resolvedPath = resolve(configRoot, <string>(path || defaultPath))
-  const exists = await pathExists(resolvedPath)
+  const resolvedPath = resolve(configRoot, pathOrDefault)
 
-  if (!exists && path && path !== defaultPath && !optional) {
-    throw new ConfigurationError({
-      message: `Could not find varfile at path '${path}'. Absolute path: ${resolvedPath}`,
-    })
+  let promise: Promise<LoadedVarfile> | undefined = loadVarfileCache.get(resolvedPath)
+  if (!promise) {
+    promise = loadVarfileInner()
+    loadVarfileCache.set(resolvedPath, promise)
   }
 
-  if (!exists) {
-    return {}
-  }
+  return await promise
 
-  try {
-    const data = await readFile(resolvedPath)
-    const relPath = relative(configRoot, resolvedPath)
-    const filename = basename(resolvedPath.toLowerCase())
+  async function loadVarfileInner(): Promise<LoadedVarfile> {
+    try {
+      const fileContents = await readFile(resolvedPath)
+      log?.silly(() => `Loaded ${fileContents.length} bytes from varfile ${resolvedPath}`)
+      const relPath = relative(configRoot, resolvedPath)
+      const filename = basename(resolvedPath.toLowerCase())
 
-    if (filename.endsWith(".json")) {
-      // JSON parser throws a JSON syntax error on completely empty input file,
-      // and returns an empty object for an empty JSON.
-      const parsed = JSON.parse(data.toString())
-      if (!isPlainObject(parsed)) {
-        throw new ConfigurationError({
-          message: `Configured variable file ${relPath} must be a valid plain JSON object. Got: ${typeof parsed}`,
+      if (filename.endsWith(".json")) {
+        // JSON parser throws a JSON syntax error on completely empty input file,
+        // and returns an empty object for an empty JSON.
+        const parsed = JSON.parse(fileContents.toString())
+        if (!isPlainObject(parsed)) {
+          throw new ConfigurationError({
+            message: `Configured variable file ${relPath} must be a valid plain JSON object. Got: ${typeof parsed}`,
+          })
+        }
+        return {
+          data: parsed as PrimitiveMap,
+          // source mapping to JSON has not been implemented at this point
+          source: { path: [] },
+        }
+      } else if (filename.endsWith(".yml") || filename.endsWith(".yaml")) {
+        const loaded = await loadAndValidateYaml({
+          content: fileContents.toString("utf-8"),
+          filename: resolvedPath,
+          version: "1.2",
+          sourceDescription: `varfile at ${relPath}`,
         })
+        if (loaded.length === 0) {
+          // We treat empty documents as an empty object mapping
+          return {
+            data: {},
+            source: {
+              path: [],
+            },
+          }
+        }
+        if (loaded.length > 1) {
+          throw new ConfigurationError({
+            message: `Configured variable file ${relPath} must be a single YAML document. Got multiple (${loaded.length}) YAML documents`,
+          })
+        }
+        const yamlDoc = loaded[0]
+        // YAML parser returns `undefined` for empty files, we interpret that as an empty object.
+        const data = yamlDoc.toJS() || {}
+        if (!isPlainObject(data)) {
+          throw new ConfigurationError({
+            message: `Configured variable file ${relPath} must be a single plain YAML mapping. Got: ${typeof data}`,
+          })
+        }
+        return {
+          data,
+          source: {
+            path: [],
+            yamlDoc,
+          },
+        }
+      } else {
+        // Note: For backwards-compatibility we fall back on using .env as a default format,
+        // and don't specifically validate the extension for that.
+        // The dotenv parser returns an empty object for invalid or empty input file.
+        const parsed = dotenv.parse(fileContents)
+        return {
+          data: parsed as PrimitiveMap,
+          // source mapping to dotenv files has not been implemented at this point
+          source: { path: [] },
+        }
       }
-      return parsed as PrimitiveMap
-    } else if (filename.endsWith(".yml") || filename.endsWith(".yaml")) {
-      // YAML parser returns `undefined` for empty files, we interpret that as an empty object.
-      const parsed = load(data.toString()) || {}
-      if (!isPlainObject(parsed)) {
-        throw new ConfigurationError({
-          message: `Configured variable file ${relPath} must be a single plain YAML mapping. Got: ${typeof parsed}`,
-        })
+    } catch (error) {
+      if (error instanceof ConfigurationError) {
+        throw error
       }
-      return parsed as PrimitiveMap
-    } else {
-      // Note: For backwards-compatibility we fall back on using .env as a default format,
-      // and don't specifically validate the extension for that.
-      // The dotenv parser returns an empty object for invalid or empty input file.
-      const parsed = dotenv.parse(data)
-      return parsed as PrimitiveMap
+
+      if (isErrnoException(error) && error.code === "ENOENT") {
+        if (
+          // if path is defined, we are loading explicitly configured varfile.
+          path &&
+          // if the user explicitly declares default path (e.g. garden.env) then we do not throw.
+          path !== defaultPath &&
+          !optional
+        ) {
+          throw new ConfigurationError({
+            message: `Could not find varfile at path '${path}'. Absolute path: ${resolvedPath}`,
+          })
+        } else {
+          // The default var file did not exist. In that case we return empty object.
+          return {
+            data: {},
+            source: {
+              path: [],
+            },
+          }
+        }
+      }
+
+      throw new ConfigurationError({
+        message: `Unable to load varfile at '${path}': ${error}`,
+      })
     }
-  } catch (error) {
-    throw new ConfigurationError({
-      message: `Unable to load varfile at '${path}': ${error}`,
-    })
   }
-}
+})

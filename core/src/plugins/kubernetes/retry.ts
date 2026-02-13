@@ -11,12 +11,12 @@ import { ApiException as KubernetesApiException } from "@kubernetes/client-node"
 import { sleep } from "../../util/util.js"
 import type { Log } from "../../logger/log-entry.js"
 import { deline } from "../../util/string.js"
-import { LogLevel } from "../../logger/logger.js"
 import { KubernetesError } from "./api.js"
 import type { NodeJSErrnoException } from "../../exceptions.js"
 import { InternalError, isErrnoException } from "../../exceptions.js"
 import type { ErrorEvent } from "ws"
 import dns from "node:dns"
+import { trim } from "lodash-es"
 
 /**
  * The flag {@code forceRetry} can be used to avoid {@link shouldRetry} helper call in case if the error code
@@ -50,10 +50,10 @@ export async function requestWithRetry<R>(
       return await req()
     } catch (err) {
       if (forceRetry || shouldRetry(err, context)) {
-        retryLog = retryLog || log.createLog({ fixLevel: LogLevel.debug })
+        retryLog = retryLog || log.createLog()
         if (usedRetries <= maxRetries) {
           const sleepMsec = minTimeoutMs + usedRetries * minTimeoutMs
-          retryLog.info(deline`
+          retryLog.debug(deline`
             ${context} failed with error '${err}', retrying in ${sleepMsec}ms
             (${usedRetries}/${maxRetries})
           `)
@@ -61,7 +61,7 @@ export async function requestWithRetry<R>(
           return await retry(usedRetries + 1)
         } else {
           if (usedRetries === maxRetries) {
-            retryLog.error(`Kubernetes API: Maximum retry count exceeded`)
+            retryLog.error(`Kubernetes API: Maximum retry count of ${maxRetries} exceeded for operation ${context}`)
           }
           throw err
         }
@@ -121,6 +121,12 @@ export function toKubernetesError(err: unknown, context: string): KubernetesErro
     errorType = "WebsocketError"
     originalMessage = err.message
     // The ErrorEvent does not expose the status code other than as part of the error.message
+  } else if (err instanceof Error && err.name === "Error" && err.cause === undefined) {
+    // exec auth getCredential function of kubernetes client throws plain error
+    // see also https://github.com/kubernetes-client/javascript/blob/release-1.x/src/exec_auth.ts
+    // TODO: fix the client to throw a more recognizable error
+    errorType = "Error"
+    originalMessage = trim(err.message)
   } else {
     // In all other cases, we don't know what this is, so let's just throw an InternalError
     throw InternalError.wrapError(err, `toKubernetesError encountered an unknown error during ${context}`)
